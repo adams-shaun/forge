@@ -318,8 +318,12 @@ public class ScriptedController extends PlayerControllerAi {
         Decision d = take(x -> x.resume.equals("unless_pay") && x.picks.size() == 1);
         if (d != null) {
             String pick = d.picks.get(0).trim().toLowerCase(java.util.Locale.ROOT);
-            boolean pay = pick.startsWith("pay");
-            boolean paid = pay && PlaySpellAbility.payCostDuringAbilityResolve(this, player, cost, sa, null);
+            // "Pay 2", "Pay the cost", "Sacrifice nonland permanent": every
+            // answer but the decline pays. An unaffordable cost is not started
+            // (a partial payment would spend life before the mana fails).
+            boolean pay = !(pick.startsWith("don't") || pick.startsWith("do not") || pick.startsWith("dont"));
+            boolean paid = pay && forge.ai.ComputerUtilCost.canPayCost(cost, sa, player, true)
+                    && PlaySpellAbility.payCostDuringAbilityResolve(this, player, cost, sa, null);
             m.note("unless-pay step " + m.step() + ": " + d.picks.get(0) + (pay ? " paid=" + paid : ""));
             return paid;
         }
@@ -526,6 +530,10 @@ public class ScriptedController extends PlayerControllerAi {
         if (spells.size() <= num) {
             return spells;
         }
+        List<SpellAbility> picked = m.chooseGenericModes(seat, spells, num);
+        if (picked != null) {
+            return picked;
+        }
         m.miss("spell abilities", title);
         return super.chooseSpellAbilitiesForEffect(spells, sa, title, num, params);
     }
@@ -534,6 +542,10 @@ public class ScriptedController extends PlayerControllerAi {
     public SpellAbility chooseSingleSpellForEffect(List<SpellAbility> spells, SpellAbility sa, String title, Map<String, Object> params) {
         if (spells.size() == 1) {
             return spells.get(0);
+        }
+        List<SpellAbility> picked = m.chooseGenericModes(seat, spells, 1);
+        if (picked != null) {
+            return picked.get(0);
         }
         m.miss("spell", title);
         return super.chooseSingleSpellForEffect(spells, sa, title, params);
