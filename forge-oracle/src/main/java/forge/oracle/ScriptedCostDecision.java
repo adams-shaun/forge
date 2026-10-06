@@ -1,0 +1,189 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package forge.oracle;
+
+import java.util.List;
+
+import forge.ai.AiCostDecision;
+import forge.game.card.Card;
+import forge.game.card.CardCollectionView;
+import forge.game.card.CardLists;
+import forge.game.card.CardPredicates;
+import forge.game.cost.*;
+import forge.game.player.Player;
+import forge.game.spellability.SpellAbility;
+import forge.game.zone.ZoneType;
+
+/**
+ * Cost decisions for the scripted seat. P0 found that ordinary costs went
+ * through AiCostDecision, i.e. silent AI answers. Here every cost part either
+ * <ul>
+ * <li>has nothing to choose ({T}, {Q}, pay life, mana, a cost on the source
+ *     itself, a fixed number) and keeps the AI parent's deterministic answer;</li>
+ * <li>chooses cards (sacrifice, discard, tap/untap a type, exile, return ...)
+ *     and is answered from gorge's object picks at the current step, or is
+ *     forced (exactly as many candidates as the cost needs), or is a strict
+ *     miss.</li>
+ * </ul>
+ */
+public class ScriptedCostDecision extends AiCostDecision {
+    final StepMachine m;
+    final int seat;
+
+    public ScriptedCostDecision(StepMachine m, int seat, Player p, SpellAbility sa, boolean effect) {
+        super(p, sa, effect);
+        this.m = m;
+        this.seat = seat;
+    }
+
+    /** A card-choosing cost: scripted pick, else forced, else strict miss
+     * (loose: the AI's pick). */
+    private PaymentDecision cards(CostPart cost, CardCollectionView valid, int amount, PaymentDecision ai) {
+        List<Card> picked = m.pickObjects(seat, valid, amount, amount, "cost " + cost.getClass().getSimpleName());
+        if (picked != null) {
+            return PaymentDecision.card(picked);
+        }
+        return ai;
+    }
+
+    private CardCollectionView valid(ZoneType zone, String type) {
+        CardCollectionView list = player.getCardsIn(zone);
+        return CardLists.getValidCards(list, type.split(";"), player, source, ability);
+    }
+
+    private PaymentDecision choice(CostPart cost, PaymentDecision ai) {
+        if (cost.payCostFromSource()) {
+            return ai;
+        }
+        m.miss("cost " + cost.getClass().getSimpleName(), cost.toString());
+        return ai;
+    }
+
+    @Override
+    public PaymentDecision visit(CostSacrifice cost) {
+        if (cost.payCostFromSource() || cost.getType().equals("OriginalHost") || cost.getAmount().equals("All")) {
+            return super.visit(cost);
+        }
+        int n = cost.getAbilityAmount(ability);
+        if (n == 0) {
+            return PaymentDecision.number(0);
+        }
+        CardCollectionView list = CardLists.filter(player.getCardsIn(ZoneType.Battlefield), CardPredicates.canBeSacrificedBy(ability, isEffect()));
+        list = CardLists.getValidCards(list, cost.getType().replace("+WithDifferentNames", "").split(";"), player, source, ability);
+        return cards(cost, list, n, m.strict() ? null : super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostDiscard cost) {
+        String type = cost.getType();
+        if (cost.payCostFromSource() || type.equals("Hand") || type.equals("LastDrawn") || type.equals("Random") || type.contains("WithSameName")) {
+            return super.visit(cost);
+        }
+        int n = cost.getAbilityAmount(ability);
+        return cards(cost, valid(ZoneType.Hand, type), n, m.strict() ? null : super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostTapType cost) {
+        int n = cost.getAbilityAmount(ability);
+        CardCollectionView list = CardLists.filter(valid(ZoneType.Battlefield, cost.getType().replace("+withTotalPowerGE", "")), CardPredicates.UNTAPPED);
+        if (cost.getType().contains("+withTotalPowerGE")) {
+            return choice(cost, super.visit(cost));
+        }
+        return cards(cost, list, n, m.strict() ? null : super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostUntapType cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostExile cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostReturn cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostReveal cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostPutCardToLib cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostGainControl cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostRemoveAnyCounter cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostExiledMoveToGrave cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostBehold cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostBeholdExile cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostCollectEvidence cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostForage cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostExert cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostEnlist cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostPromiseGift cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostChooseColor cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostChooseCreatureType cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostBlight cost) {
+        return choice(cost, super.visit(cost));
+    }
+
+    @Override
+    public PaymentDecision visit(CostRevealChosen cost) {
+        return choice(cost, super.visit(cost));
+    }
+}

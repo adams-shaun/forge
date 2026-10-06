@@ -9,12 +9,12 @@ import forge.util.MyRandom;
 
 /** The real engine behind ScenarioReplay: a fresh Match and Game per attempt,
  * with MyRandom seeded from the scenario id so a replay is byte-identical
- * apart from ms (DESIGN 6.1). The scenario run itself lands with P1-2..P1-4. */
+ * apart from ms (DESIGN 6.1). */
 public final class ForgeEngine implements ScenarioReplay.Engine {
     @Override
     public ResultRow replayOnce(Request req, boolean strict) {
         MyRandom.setRandom(new Random(seed(req.id)));
-        throw new HarnessError("the scenario run is not implemented yet (P1-2..P1-4)");
+        return new StepMachine(req, strict).run();
     }
 
     public static long seed(String id) {
