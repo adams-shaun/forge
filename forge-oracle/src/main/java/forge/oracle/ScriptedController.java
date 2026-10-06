@@ -125,6 +125,27 @@ public class ScriptedController extends PlayerControllerAi {
                     n++;
                 }
             }
+            if (n != 1) {
+                // gorge's label names the cost by its verb ("Discard 1 card",
+                // "Sacrifice creature or enchantment", "Forage"): bind to the
+                // one SA whose cost has that kind of part.
+                String verb = want.split(" ")[0];
+                hit = null;
+                n = 0;
+                for (SpellAbility sa : abilities) {
+                    if (sa.getPayCosts() == null) {
+                        continue;
+                    }
+                    for (CostPart part : sa.getPayCosts().getCostParts()) {
+                        String cls = part.getClass().getSimpleName().toLowerCase(java.util.Locale.ROOT);
+                        if (cls.equals("cost" + verb)) {
+                            hit = sa;
+                            n++;
+                            break;
+                        }
+                    }
+                }
+            }
             if (n == 1) {
                 m.note("ability choice step " + m.step() + ": " + d.picks.get(0));
                 return hit;
@@ -225,6 +246,11 @@ public class ScriptedController extends PlayerControllerAi {
         }
         if (min == max) {
             return min;
+        }
+        if (min == 0 && m.take(seat, x -> x.pickKinds.contains("trigger_cost_decline")) != null) {
+            // "you may pay {1} up to three times": gorge declined paying at all.
+            m.note("announce " + announce + "=0 (gorge: trigger_cost_decline)");
+            return 0;
         }
         m.miss("x", announce + " for " + ability);
         return super.announceRequirements(ability, min, max, announce);
@@ -521,6 +547,11 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CardCollectionView chooseCardsToDiscardUnlessType(int min, CardCollectionView hand, String[] unlessTypes, SpellAbility sa) {
+        // gorge logs the discard as one pick (one typed card, or min cards).
+        List<Card> picked = m.pickObjects(seat, hand, 1, Math.max(min, 1), "discard unless type");
+        if (picked != null && !picked.isEmpty()) {
+            return new CardCollection(picked);
+        }
         m.miss("discard unless type", String.valueOf(sa));
         return super.chooseCardsToDiscardUnlessType(min, hand, unlessTypes, sa);
     }
