@@ -249,7 +249,7 @@ public final class DecisionQueue {
     }
 
     static final java.util.Set<String> NON_OBJECT_PICKS = java.util.Set.of("yes", "no", "opening_yes", "opening_no",
-            "trigger_cost_decline", "trigger_cost_pay", "gift_decline", "activate", "x", "altaddcost", "primary", "type", "mode", "color", "name");
+            "trigger_cost_decline", "trigger_cost_pay", "gift_decline", "activate", "x", "altaddcost", "primary", "type", "mode", "color", "name", "mana", "unlock", "forage_exile");
 
     /** A trigger or optional-cost payment answer: true pays, false declines. */
     public static Boolean payOf(Decision d) {
