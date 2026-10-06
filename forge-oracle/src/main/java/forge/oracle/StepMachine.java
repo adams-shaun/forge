@@ -188,7 +188,33 @@ public final class StepMachine {
     }
 
     Decision take(int seat, Predicate<Decision> match) {
-        return dq.take(stepIdx, d -> d.seat == seat && match.test(d));
+        for (int st : decisionSteps()) {
+            Decision d = dq.take(st, x -> x.seat == seat && match.test(x));
+            if (d != null) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    /** The steps whose logged decisions answer a question asked now. gorge's
+     * pass_to stops at the first decision posed in the named step: a
+     * beginning-of-combat trigger's target ask is pending there, so gorge
+     * logs that answer under the NEXT step. Forge asks it while putting the
+     * trigger on the stack, before the priority where this driver stops, so
+     * once the pass_to's step stop holds, the next step's answers count too. */
+    int[] decisionSteps() {
+        if (stepIdx >= 0 && stepIdx + 1 < steps.size() && game != null) {
+            JsonObject st = steps.get(stepIdx).getAsJsonObject();
+            if (Request.str(st, "op").equals("pass_to") && acted && !Request.str(st, "step").isEmpty()
+                    && Request.str(st, "step").equals(SnapshotWriter.stepName(game.getPhaseHandler().getPhase()))) {
+                String active = Request.str(st, "active");
+                if (active.isEmpty() || game.getPhaseHandler().getPlayerTurn() == seats[RefTable.parseSeat(active)]) {
+                    return new int[] {stepIdx, stepIdx + 1};
+                }
+            }
+        }
+        return new int[] {stepIdx};
     }
 
     // ---- the priority callback ---------------------------------------------
@@ -609,41 +635,123 @@ public final class StepMachine {
         throw new HarnessError(Request.str(st, "card") + " has no land play");
     }
 
-    /** Ability identity (DESIGN 6.5; P2-1 owns the census): the gorge ability
-     * line's parsed params against each SA's params, exact first, then API
-     * plus cost for keyword-derived abilities. */
+    /** Ability identity (DESIGN 6.5, P2-1). The sidecar carries gorge's IR
+     * line for the step's ability_index. Tiers, first unique hit wins, and
+     * the tier is noted so the census reads it from the rows:
+     * <ol>
+     * <li>exact: the line's parsed params equal the SA's map params;</li>
+     * <li>basic-land: gorge's synthesized "intrinsic: basic land mana" is
+     *     Forge's CardState.getLandManaForColor ability (Secondary$, one
+     *     colour), picked by the step's "Add X" mana pick when several;</li>
+     * <li>keyword: a keyword-derived line (Keyword$ K: cycling, equip, ...)
+     *     against the SAs Forge derived from keyword K with the same API,
+     *     then the same cost;</li>
+     * <li>api+cost: same API and the same cost, parsed by Forge's own Cost.</li>
+     * </ol>
+     * Anything else is a harness row listing the candidates. */
     private SpellAbility abilityFor(Card c) {
         String line = req.abilities.get(stepIdx);
         if (line == null) {
             throw new HarnessError("no ability line for step " + stepIdx + " (sidecar abilities)");
         }
-        Map<String, String> want = AbilityFactory.getMapParams(line);
-        String kind = line.length() >= 2 ? line.substring(0, 2) : "";
-        List<SpellAbility> exact = new ArrayList<>();
-        List<SpellAbility> loose = new ArrayList<>();
+        List<SpellAbility> all = new ArrayList<>();
         for (SpellAbility sa : c.getSpellAbilities()) {
-            if (sa.isSpell() || sa.isLandAbility()) {
-                continue;
+            if (!sa.isSpell() && !sa.isLandAbility()) {
+                all.add(sa);
             }
+        }
+        if (line.startsWith("intrinsic: basic land mana")) {
+            List<SpellAbility> land = new ArrayList<>();
+            for (SpellAbility sa : all) {
+                if (sa.isManaAbility() && "True".equals(sa.getParam("Secondary")) && sa.getParam("Produced") != null
+                        && sa.getParam("Produced").length() == 1) {
+                    land.add(sa);
+                }
+            }
+            if (land.size() > 1) {
+                Decision pick = dq.peek(stepIdx, x -> x.pickKinds.contains("mana") && x.picks.size() == 1);
+                if (pick != null) {
+                    byte col = manaColor(pick.picks.get(0));
+                    land.removeIf(sa -> forge.card.MagicColor.fromName(sa.getParam("Produced")) != col);
+                    if (land.size() == 1) {
+                        pick.consumed = true;
+                    }
+                }
+            }
+            return identity("basic-land", land, all, line);
+        }
+        Map<String, String> want = AbilityFactory.getMapParams(line);
+        List<SpellAbility> exact = new ArrayList<>();
+        for (SpellAbility sa : all) {
             if (sa.getMapParams().equals(want)) {
                 exact.add(sa);
-                continue;
             }
-            String api = sa.getApi() == null ? "" : sa.getApi().name();
-            String cost = sa.getPayCosts() == null ? "" : sa.getPayCosts().toSimpleString();
-            if (api.equalsIgnoreCase(want.getOrDefault(kind, "")) && normCost(cost).equals(normCost(want.getOrDefault("Cost", "")))) {
+        }
+        if (!exact.isEmpty()) {
+            return identity("exact", exact, all, line);
+        }
+        String kind = line.length() >= 2 ? line.substring(0, 2) : "";
+        String api = want.getOrDefault(kind, "");
+        String cost = costKey(want.getOrDefault("Cost", ""), c);
+        String kw = want.get("Keyword");
+        if (kw != null) {
+            List<SpellAbility> byKw = new ArrayList<>();
+            for (SpellAbility sa : all) {
+                if (sa.getKeyword() != null && sa.getKeyword().getKeyword() != null
+                        && sa.getKeyword().getKeyword().toString().equalsIgnoreCase(kw) && apiOf(sa).equalsIgnoreCase(api)) {
+                    byKw.add(sa);
+                }
+            }
+            if (byKw.size() > 1) {
+                byKw.removeIf(sa -> !costKey(sa).equals(cost));
+            }
+            if (!byKw.isEmpty()) {
+                return identity("keyword", byKw, all, line);
+            }
+        }
+        List<SpellAbility> loose = new ArrayList<>();
+        for (SpellAbility sa : all) {
+            if (apiOf(sa).equalsIgnoreCase(api) && costKey(sa).equals(cost)) {
                 loose.add(sa);
             }
         }
-        if (exact.size() == 1) {
-            note("identity: exact params match at step " + stepIdx);
-            return exact.get(0);
+        return identity("api+cost", loose, all, line);
+    }
+
+    private SpellAbility identity(String tier, List<SpellAbility> hits, List<SpellAbility> all, String line) {
+        if (hits.size() == 1) {
+            note("identity: " + tier + " at step " + stepIdx);
+            return hits.get(0);
         }
-        if (exact.isEmpty() && loose.size() == 1) {
-            note("identity: api+cost fallback at step " + stepIdx);
-            return loose.get(0);
+        StringBuilder b = new StringBuilder();
+        for (SpellAbility sa : all) {
+            b.append(b.length() == 0 ? "" : "; ").append(apiOf(sa)).append(" ").append(costKey(sa));
+            if (sa.getKeyword() != null) {
+                b.append(" kw=").append(sa.getKeyword().getKeyword());
+            }
         }
-        throw new HarnessError("ability identity at step " + stepIdx + ": exact=" + exact.size() + " loose=" + loose.size());
+        String head = line.length() > 60 ? line.substring(0, 60) : line;
+        throw new HarnessError("ability identity at step " + stepIdx + ": " + tier + " " + hits.size()
+                + " (want " + head + "; candidates: " + b + ")");
+    }
+
+    private static String apiOf(SpellAbility sa) {
+        return sa.getApi() == null ? "" : sa.getApi().name();
+    }
+
+    private static String costKey(SpellAbility sa) {
+        return sa.getPayCosts() == null ? "" : normCost(sa.getPayCosts().toSimpleString());
+    }
+
+    private static String costKey(String raw, Card host) {
+        if (raw.isEmpty()) {
+            return "";
+        }
+        try {
+            return normCost(new forge.game.cost.Cost(raw, true).toSimpleString());
+        } catch (RuntimeException e) {
+            return normCost(raw);
+        }
     }
 
     private static String normCost(String s) {
@@ -701,9 +809,11 @@ public final class StepMachine {
             return finishTargets(sa);
         }
         List<Decision> pending = new ArrayList<>();
-        for (Decision d : dq.all()) {
-            if (!d.isConsumed() && d.step == stepIdx && d.seat == ctl.seat && DecisionQueue.isTarget(d)) {
-                pending.add(d);
+        for (int stp : decisionSteps()) {
+            for (Decision d : dq.all()) {
+                if (!d.isConsumed() && d.step == stp && d.seat == ctl.seat && DecisionQueue.isTarget(d)) {
+                    pending.add(d);
+                }
             }
         }
         for (Decision d : pending) {
@@ -768,10 +878,15 @@ public final class StepMachine {
             try {
                 o = targetObject(ref);
             } catch (HarnessError e) {
-                continue;
+                o = null;
             }
-            if (sa.getTargets().contains(o) || !sa.canTarget(o)) {
-                continue;
+            if (o == null || sa.getTargets().contains(o) || !sa.canTarget(o)) {
+                // An unbound ordinal counts gorge's deal-shuffled object order;
+                // name and owner are the identity (contract): another copy.
+                o = sameNameTarget(sa, ref);
+                if (o == null) {
+                    continue;
+                }
             }
             sa.getTargets().add(o);
             got++;
@@ -784,6 +899,31 @@ public final class StepMachine {
             note("target step " + stepIdx + ": " + ref + " -> " + o);
         }
         return got;
+    }
+
+    private GameObject sameNameTarget(SpellAbility sa, String ref) {
+        RefTable.Ref r;
+        try {
+            r = RefTable.parse(ref);
+        } catch (HarnessError e) {
+            return null;
+        }
+        if (r.player || r.token) {
+            return null;
+        }
+        List<Card> cs = new ArrayList<>();
+        for (Card c : game.getCardsInGame()) {
+            if (c.getName().equals(r.name) && SnapshotWriter.seatOf(seats, c.getOwner()) == r.seat
+                    && !sa.getTargets().contains(c) && sa.canTarget(c)) {
+                cs.add(c);
+            }
+        }
+        cs.sort((x, y) -> Integer.compare(x.getId(), y.getId()));
+        if (cs.isEmpty()) {
+            return null;
+        }
+        note("target " + ref + ": took another " + r.name + " (gorge's ordinal names a different copy)");
+        return cs.get(0);
     }
 
     private final Map<Decision, List<String>> usedRefs = new java.util.IdentityHashMap<>();
@@ -996,11 +1136,43 @@ public final class StepMachine {
     <T extends GameEntity> List<T> pickObjects(int seat, Iterable<T> options, int min, int max, String what) {
         List<T> opts = new ArrayList<>();
         options.forEach(opts::add);
+        if (carryStep == stepIdx && carrySeat == seat && (!carryRefs.isEmpty() || carryOpen)) {
+            // The rest of one gorge pick that Forge asks for one card at a time
+            // (a search "up to two" is one gorge decision, two Forge asks).
+            List<T> out = new ArrayList<>();
+            Set<T> used = new HashSet<>();
+            while (!carryRefs.isEmpty() && out.size() < max) {
+                T o = matchRef(carryRefs.get(0), opts, used);
+                if (o == null) {
+                    break;
+                }
+                carryRefs.remove(0);
+                used.add(o);
+                out.add(o);
+            }
+            if (!out.isEmpty() || (carryRefs.isEmpty() && min == 0)) {
+                if (carryRefs.isEmpty()) {
+                    carryOpen = false;
+                }
+                note("pick step " + stepIdx + " " + what + ": carried " + out.size());
+                return out;
+            }
+            carryRefs.clear();
+            carryOpen = false;
+        }
         Decision d = take(seat, x -> DecisionQueue.isObjectChoice(x) || DecisionQueue.isEmptyChoice(x));
         if (d != null) {
             List<T> out = new ArrayList<>();
             Set<T> used = new HashSet<>();
-            for (String ref : d.refs()) {
+            List<String> refsAll = d.refs();
+            List<String> refsNow = refsAll.size() > max && max >= 1 ? refsAll.subList(0, max) : refsAll;
+            if (refsNow != refsAll || d.max > max) {
+                carryStep = stepIdx;
+                carrySeat = seat;
+                carryRefs = new ArrayList<>(refsAll.subList(refsNow.size(), refsAll.size()));
+                carryOpen = d.max > refsAll.size() || !carryRefs.isEmpty();
+            }
+            for (String ref : refsNow) {
                 T o = matchRef(ref, opts, used);
                 if (o == null) {
                     miss(what, "gorge pick " + ref + " is not among Forge's " + opts.size() + " options");
@@ -1025,6 +1197,11 @@ public final class StepMachine {
         miss(what, opts.size() + " options, " + min + ".." + max + " to pick");
         return null;
     }
+
+    private int carryStep = -99;
+    private int carrySeat = -1;
+    private List<String> carryRefs = new ArrayList<>();
+    private boolean carryOpen;
 
     private <T extends GameEntity> T matchRef(String ref, List<T> opts, Set<T> used) {
         GameEntity e;
@@ -1068,17 +1245,32 @@ public final class StepMachine {
 
     /** A colour pick by name ("White"); null when gorge logged none. */
     Byte chooseColor(int seat, forge.card.ColorSet options) {
-        Decision d = take(seat, x -> x.kind.equals("choose_n") && x.pickKinds.contains("color") && x.picks.size() == 1);
+        Decision d = take(seat, x -> x.kind.equals("choose_n") && x.picks.size() == 1
+                && (x.pickKinds.contains("color") || (x.pickKinds.contains("mana") && manaColor(x.picks.get(0)) != 0)));
         if (d == null) {
             return null;
         }
-        byte b = forge.card.MagicColor.fromName(d.picks.get(0));
+        byte b = d.pickKinds.contains("mana") ? manaColor(d.picks.get(0)) : forge.card.MagicColor.fromName(d.picks.get(0));
         if (b == 0 || (options != null && !options.hasAnyColor(b))) {
             miss("colour", "gorge colour " + d.picks.get(0) + " is not offered");
             return null;
         }
         note("colour step " + stepIdx + ": " + d.picks.get(0));
         return b;
+    }
+
+    /** gorge's mana-ability colour pick ("Add R", "Add {G}"): the colour of
+     * a single coloured symbol, else 0 (colourless or several symbols). */
+    static byte manaColor(String label) {
+        String t = label.trim();
+        if (!t.startsWith("Add ")) {
+            return 0;
+        }
+        String sym = t.substring(4).replace("{", "").replace("}", "").trim();
+        if (sym.length() != 1) {
+            return 0;
+        }
+        return forge.card.MagicColor.fromName(sym.toLowerCase(java.util.Locale.ROOT));
     }
 
     /** A card-name pick ("name" kind). */
