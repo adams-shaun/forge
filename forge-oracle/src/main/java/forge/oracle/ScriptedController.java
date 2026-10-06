@@ -439,8 +439,32 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public Map<Card, ManaCostShard> chooseCardsForConvokeOrImprovise(SpellAbility sa, ManaCost manaCost, CardCollectionView untappedCards, boolean artifacts, boolean creatures, Integer maxReduction) {
-        // The driver pays from the pool only; convoke/improvise is never used.
-        return new java.util.HashMap<>();
+        // gorge's convoke/improvise picks (pick kinds convoke_generic,
+        // convoke_<C>, improvise...): each names a creature/artifact and the
+        // pip it pays. With none logged, gorge paid from the pool only.
+        Map<Card, ManaCostShard> out = new java.util.LinkedHashMap<>();
+        while (true) {
+            Decision d = take(x -> !x.pickKinds.isEmpty() && (x.pickKinds.get(0).startsWith("convoke") || x.pickKinds.get(0).startsWith("improvise")));
+            if (d == null) {
+                break;
+            }
+            List<String> refs = d.refs();
+            for (int i = 0; i < refs.size(); i++) {
+                Card c = m.card(refs.get(i));
+                String k = i < d.pickKinds.size() ? d.pickKinds.get(i) : d.pickKinds.get(0);
+                String col = k.contains("_") ? k.substring(k.indexOf('_') + 1) : "generic";
+                ManaCostShard sh = col.equals("generic") ? ManaCostShard.GENERIC : ManaCostShard.parseNonGeneric(col);
+                if (!untappedCards.contains(c)) {
+                    m.miss("convoke", refs.get(i) + " is not offered");
+                    return new java.util.HashMap<>();
+                }
+                out.put(c, sh);
+            }
+        }
+        if (!out.isEmpty()) {
+            m.note("convoke step " + m.step() + ": " + out.size() + " tapped");
+        }
+        return out;
     }
 
     @Override
@@ -468,6 +492,23 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public Map<Byte, Integer> specifyManaCombo(SpellAbility sa, ColorSet colorSet, int manaAmount, boolean different) {
+        // gorge's per-pip mana picks ("Forage: Add W", "Forage: Add U").
+        Decision d = take(x -> x.pickKinds.size() == manaAmount && x.pickKinds.stream().allMatch("mana"::equals));
+        if (d != null) {
+            Map<Byte, Integer> out = new java.util.HashMap<>();
+            for (String p : d.picks) {
+                byte b = StepMachine.manaColor(p);
+                if (b == 0 || !colorSet.hasAnyColor(b)) {
+                    out = null;
+                    break;
+                }
+                out.merge(b, 1, Integer::sum);
+            }
+            if (out != null) {
+                m.note("mana combo step " + m.step() + ": " + d.picks);
+                return out;
+            }
+        }
         m.miss("mana combo", String.valueOf(sa));
         return super.specifyManaCombo(sa, colorSet, manaAmount, different);
     }
