@@ -30,6 +30,7 @@ public final class DecisionQueue {
         public final String kind;
         public final String gorgeKind;
         public final String via;
+        public final String resume;
         public final List<String> picks;
         public final List<String> pickRefs;
         public final List<String> objectPicks;
@@ -45,6 +46,7 @@ public final class DecisionQueue {
             kind = Request.str(o, "kind");
             gorgeKind = Request.str(o, "gorge_kind");
             via = Request.str(o, "via");
+            resume = Request.str(o, "resume");
             picks = Request.strings(o, "picks");
             pickRefs = Request.strings(o, "pick_refs");
             objectPicks = Request.strings(o, "object_picks");
@@ -61,16 +63,18 @@ public final class DecisionQueue {
         /** The object refs of a pick: object_picks when present, else the
          * pick_refs that look like refs. */
         public List<String> refs() {
-            if (!objectPicks.isEmpty()) {
-                return objectPicks;
-            }
+            // pick_refs carries players too ("p1"); object_picks only objects.
+            // A charm's one target ask mixes both (Brigid's Command).
             List<String> out = new ArrayList<>();
             for (String r : pickRefs) {
                 if (RefTable.parseSeat(r.contains(":") ? r.substring(0, r.indexOf(':')) : r) >= 0) {
                     out.add(r);
                 }
             }
-            return out;
+            if (out.size() >= objectPicks.size() && out.containsAll(objectPicks)) {
+                return out;
+            }
+            return objectPicks;
         }
 
         public String describe() {
@@ -109,10 +113,27 @@ public final class DecisionQueue {
         return null;
     }
 
+    /** gorge's payment-window asks (contract, gorge cmd/oraclediff/forge.go):
+     * the hybrid/Phyrexian pip choice (pick kinds pay_&lt;C&gt;, pay_generic,
+     * pay_life) and a mana ability activated while paying (pick kind
+     * "activate"). Forge pays from the pool and poses neither, so they are
+     * never leftover. */
+    public static boolean isPaymentWindow(Decision d) {
+        if (d.pickKinds.isEmpty()) {
+            return false;
+        }
+        for (String k : d.pickKinds) {
+            if (!k.startsWith("pay_") && !k.equals("activate")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public List<Decision> unconsumed() {
         List<Decision> out = new ArrayList<>();
         for (Decision d : all) {
-            if (!d.consumed) {
+            if (!d.consumed && !isPaymentWindow(d)) {
                 out.add(d);
             }
         }
@@ -157,7 +178,7 @@ public final class DecisionQueue {
     /** A yes/no answer: a trigger_optional "yesno" or a choose whose single
      * pick is a yes/no label. */
     public static boolean isYesNo(Decision d) {
-        if (d.kind.equals("yesno")) {
+        if (d.kind.equals("yesno") || isPlayChoice(d)) {
             return true;
         }
         if (!d.kind.equals("choose_n") || d.picks.size() != 1) {
@@ -169,7 +190,7 @@ public final class DecisionQueue {
     /** true for yes, false for no, null when the label is neither. */
     public static Boolean yesNoOf(String label, String pickKind) {
         String k = pickKind.toLowerCase(Locale.ROOT);
-        if (k.equals("yes") || k.equals("opening_yes") || k.equals("trigger_cost_pay")) {
+        if (k.equals("yes") || k.equals("opening_yes") || k.equals("trigger_cost_pay") || k.equals("trigger_cost_tap")) {
             return Boolean.TRUE;
         }
         if (k.equals("no") || k.equals("opening_no") || k.equals("trigger_cost_decline")) {
@@ -185,7 +206,16 @@ public final class DecisionQueue {
         return null;
     }
 
+    /** gorge's "you may play/cast it" ask (resume "play"): an empty answer
+     * declines, a pick plays. */
+    public static boolean isPlayChoice(Decision d) {
+        return d.resume.equals("play") && (d.kind.equals("mode") || d.kind.equals("choose_n"));
+    }
+
     public static boolean yes(Decision d) {
+        if (isPlayChoice(d)) {
+            return !d.picks.isEmpty();
+        }
         if (d.picks.isEmpty()) {
             return false; // an empty answer to an optional ask declines it
         }
@@ -219,7 +249,7 @@ public final class DecisionQueue {
     }
 
     static final java.util.Set<String> NON_OBJECT_PICKS = java.util.Set.of("yes", "no", "opening_yes", "opening_no",
-            "trigger_cost_decline", "trigger_cost_pay", "gift_decline", "activate", "x", "altaddcost", "primary", "type", "mode", "color", "name");
+            "trigger_cost_decline", "trigger_cost_pay", "gift_decline", "activate", "x", "altaddcost", "primary", "type", "mode", "color", "name", "mana", "unlock", "forage_exile");
 
     /** A trigger or optional-cost payment answer: true pays, false declines. */
     public static Boolean payOf(Decision d) {

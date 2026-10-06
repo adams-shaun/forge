@@ -87,7 +87,13 @@ public class ScriptedCostDecision extends AiCostDecision {
         int n = cost.getAbilityAmount(ability);
         CardCollectionView list = CardLists.filter(valid(ZoneType.Battlefield, cost.getType().replace("+withTotalPowerGE", "")), CardPredicates.UNTAPPED);
         if (cost.getType().contains("+withTotalPowerGE")) {
-            return choice(cost, super.visit(cost));
+            // Crew / saddle / teamwork: any number with enough total power;
+            // gorge logs the tapped creatures as one tapcost pick.
+            List<Card> picked = m.pickObjects(seat, list, 1, list.size(), "cost CostTapType (total power)");
+            if (picked != null) {
+                return PaymentDecision.card(picked);
+            }
+            return m.strict() ? null : super.visit(cost);
         }
         return cards(cost, list, n, m.strict() ? null : super.visit(cost));
     }
@@ -97,9 +103,20 @@ public class ScriptedCostDecision extends AiCostDecision {
         return choice(cost, super.visit(cost));
     }
 
+    /** Exile N cards of a type from a zone: gorge's exilecost picks. */
     @Override
     public PaymentDecision visit(CostExile cost) {
-        return choice(cost, super.visit(cost));
+        String type = cost.getType();
+        if (cost.payCostFromSource() || type.equals("All") || type.contains("FromTopGrave") || type.contains("+withTotal")) {
+            return choice(cost, super.visit(cost));
+        }
+        int n = cost.getAbilityAmount(ability);
+        CardCollectionView list = CardLists.getValidCards(player.getCardsIn(cost.getFrom()), type.split(";"), player, source, ability);
+        List<Card> picked = m.pickObjects(seat, list, n, n, "cost CostExile");
+        if (picked != null && picked.size() == n) {
+            return PaymentDecision.card(picked);
+        }
+        return m.strict() ? null : super.visit(cost);
     }
 
     @Override
@@ -147,9 +164,27 @@ public class ScriptedCostDecision extends AiCostDecision {
         return choice(cost, super.visit(cost));
     }
 
+    /** Forage: gorge logs which way (forage_exile / a Food sacrifice) and then
+     * the cards; Forge's decision is just the cards (three from the graveyard,
+     * or one Food). */
     @Override
     public PaymentDecision visit(CostForage cost) {
-        return choice(cost, super.visit(cost));
+        if (m.take(seat, d -> d.pickKinds.contains("trigger_cost_decline")) != null) {
+            m.note("forage declined (gorge: trigger_cost_decline)");
+            return null;
+        }
+        CardCollectionView food = CardLists.filter(player.getCardsIn(ZoneType.Battlefield), CardPredicates.isType("Food"), CardPredicates.canBeSacrificedBy(ability, isEffect()));
+        // gorge logs which way only when both are open; with no Food it exiles.
+        boolean exile = m.take(seat, d -> d.pickKinds.contains("forage_exile")) != null || food.isEmpty();
+        CardCollectionView list = exile
+                ? CardLists.filter(player.getCardsIn(ZoneType.Graveyard), CardPredicates.canExiledBy(ability, isEffect()))
+                : CardLists.filter(player.getCardsIn(ZoneType.Battlefield), CardPredicates.isType("Food"), CardPredicates.canBeSacrificedBy(ability, isEffect()));
+        int n = exile ? 3 : 1;
+        List<Card> picked = m.pickObjects(seat, list, n, n, "cost CostForage");
+        if (picked != null && picked.size() == n) {
+            return PaymentDecision.card(picked);
+        }
+        return m.strict() ? null : super.visit(cost);
     }
 
     @Override
