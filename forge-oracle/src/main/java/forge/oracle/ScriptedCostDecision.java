@@ -103,9 +103,20 @@ public class ScriptedCostDecision extends AiCostDecision {
         return choice(cost, super.visit(cost));
     }
 
+    /** Exile N cards of a type from a zone: gorge's exilecost picks. */
     @Override
     public PaymentDecision visit(CostExile cost) {
-        return choice(cost, super.visit(cost));
+        String type = cost.getType();
+        if (cost.payCostFromSource() || type.equals("All") || type.contains("FromTopGrave") || type.contains("+withTotal")) {
+            return choice(cost, super.visit(cost));
+        }
+        int n = cost.getAbilityAmount(ability);
+        CardCollectionView list = CardLists.getValidCards(player.getCardsIn(cost.getFrom()), type.split(";"), player, source, ability);
+        List<Card> picked = m.pickObjects(seat, list, n, n, "cost CostExile");
+        if (picked != null && picked.size() == n) {
+            return PaymentDecision.card(picked);
+        }
+        return m.strict() ? null : super.visit(cost);
     }
 
     @Override
