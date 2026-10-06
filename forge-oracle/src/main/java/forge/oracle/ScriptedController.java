@@ -233,6 +233,10 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public boolean confirmReplacementEffect(ReplacementEffect replacementEffect, SpellAbility effectSA, GameEntity affected, String question) {
+        Boolean clone = m.cloneReplacement(seat);
+        if (clone != null) {
+            return clone;
+        }
         Boolean b = m.yesNo(seat, "replacement " + question);
         return b != null ? b : super.confirmReplacementEffect(replacementEffect, effectSA, affected, question);
     }
@@ -385,8 +389,11 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public int chooseNumberForKeywordCost(SpellAbility sa, Cost cost, KeywordInterface keyword, String prompt, int max) {
-        m.miss("keyword cost number", prompt);
-        return super.chooseNumberForKeywordCost(sa, cost, keyword, prompt, max);
+        // An optional keyword cost (offspring, multikicker, ...): gorge logs a
+        // decision only when it pays one, so with none logged it paid none.
+        Integer n = m.chooseNumber(seat, 0, max);
+        m.note("keyword cost " + keyword + ": " + (n == null ? 0 : n) + (n == null ? " (gorge logged none)" : ""));
+        return n == null ? 0 : n;
     }
 
     @Override
@@ -523,12 +530,20 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public ImmutablePair<CardCollection, CardCollection> arrangeForScry(CardCollection topN) {
+        List<List<Card>> a = m.arrange(seat, topN);
+        if (a != null) {
+            return ImmutablePair.of(new CardCollection(a.get(0)), new CardCollection(a.get(1)));
+        }
         m.miss("scry", "");
         return super.arrangeForScry(topN);
     }
 
     @Override
     public ImmutablePair<CardCollection, CardCollection> arrangeForSurveil(CardCollection topN) {
+        List<List<Card>> a = m.arrange(seat, topN);
+        if (a != null) {
+            return ImmutablePair.of(new CardCollection(a.get(0)), new CardCollection(a.get(1)));
+        }
         m.miss("surveil", "");
         return super.arrangeForSurveil(topN);
     }
@@ -679,6 +694,10 @@ public class ScriptedController extends PlayerControllerAi {
         if (colors.countColors() == 1) {
             return colors.getColor();
         }
+        Byte b = m.chooseColor(seat, colors);
+        if (b != null) {
+            return b;
+        }
         return missThen("colour", () -> super.chooseColor(message, sa, colors));
     }
 
@@ -689,6 +708,12 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public ColorSet chooseColors(String message, SpellAbility sa, int min, int max, ColorSet options) {
+        if (max == 1) {
+            Byte b = m.chooseColor(seat, options);
+            if (b != null) {
+                return ColorSet.fromMask(b);
+            }
+        }
         return missThen("colours", () -> super.chooseColors(message, sa, min, max, options));
     }
 
@@ -759,6 +784,10 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public String chooseCardName(SpellAbility sa, Predicate<ICardFace> cpp, String valid, String message) {
+        String n = m.chooseName(seat);
+        if (n != null) {
+            return n;
+        }
         return missThen("card name", () -> super.chooseCardName(sa, cpp, valid, message));
     }
 

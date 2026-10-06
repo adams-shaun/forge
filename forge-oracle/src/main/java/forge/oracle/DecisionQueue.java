@@ -212,8 +212,14 @@ public final class DecisionQueue {
         return true;
     }
 
+    /** gorge's empty answer to an object choice ("choose nothing", a
+     * fallback that picked no card). */
+    public static boolean isEmptyChoice(Decision d) {
+        return d.kind.equals("choose_n") && d.picks.isEmpty() && d.pickKinds.isEmpty();
+    }
+
     static final java.util.Set<String> NON_OBJECT_PICKS = java.util.Set.of("yes", "no", "opening_yes", "opening_no",
-            "trigger_cost_decline", "trigger_cost_pay", "gift_decline", "activate", "x", "altaddcost", "primary", "type", "mode");
+            "trigger_cost_decline", "trigger_cost_pay", "gift_decline", "activate", "x", "altaddcost", "primary", "type", "mode", "color", "name");
 
     /** A trigger or optional-cost payment answer: true pays, false declines. */
     public static Boolean payOf(Decision d) {
