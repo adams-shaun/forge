@@ -196,4 +196,11 @@ public class DriverContractTest {
         assertEquals(ForgeEngine.seed("Shock/cast-resolve/v1"), ForgeEngine.seed("Shock/cast-resolve/v1"));
         assertTrue(ForgeEngine.seed("Shock/cast-resolve/v1") != ForgeEngine.seed("Shock/cast-resolve/v2"));
     }
+
+    @Test
+    public void requestShaIsSha256OfTheLine() {
+        // gorge gate.Hash of the request line's bytes (no newline).
+        org.testng.Assert.assertEquals(ScenarioReplay.sha256("abc"),
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
 }

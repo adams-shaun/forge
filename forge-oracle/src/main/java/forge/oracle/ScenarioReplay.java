@@ -96,6 +96,7 @@ public final class ScenarioReplay {
             Matcher m = ID.matcher(line);
             ResultRow r = ResultRow.harnessRow(m.find() ? m.group(1) : null, "", true,
                     new HarnessError("malformed request line: " + t.getClass().getSimpleName() + ": " + t.getMessage()), forgeRef);
+            r.requestSha = sha256(line);
             return r;
         }
         ResultRow r = replay(req);
@@ -103,7 +104,23 @@ public final class ScenarioReplay {
             r.id = req.id;
         }
         r.forgeRef = forgeRef;
+        r.requestSha = sha256(line);
         return r;
+    }
+
+    /** The request sha gorge's forge-diff keys its cache by: sha256 of the
+     * line's bytes without the newline, lower-case hex (gate.Hash). */
+    static String sha256(String line) {
+        try {
+            byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(line.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder b = new StringBuilder();
+            for (byte x : h) {
+                b.append(String.format("%02x", x));
+            }
+            return b.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** Replays every non-blank line, writing one row each, flushed per row.

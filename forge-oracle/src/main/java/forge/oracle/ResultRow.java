@@ -30,6 +30,7 @@ public final class ResultRow {
     public long ms;
     public final List<JsonObject> snapshots = new ArrayList<>();
     public String forgeRef = "";
+    public String requestSha;
     public final List<String> notes = new ArrayList<>();
 
     /** The row a scenario gets when handling it throws, before or during the
@@ -93,6 +94,9 @@ public final class ResultRow {
         o.add("snapshots", s);
         o.addProperty("engine", ENGINE);
         o.addProperty("forge_ref", forgeRef);
+        if (requestSha != null) {
+            o.addProperty("request_sha", requestSha);
+        }
         JsonArray n = new JsonArray();
         notes.forEach(n::add);
         o.add("notes", n);
