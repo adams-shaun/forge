@@ -194,6 +194,12 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public TargetChoices chooseNewTargetsFor(SpellAbility ability, Predicate<GameObject> filter, boolean optional) {
+        // A copy's "you may choose new targets": gorge logs the copy's
+        // targets as a target ask with resume copy_targets.
+        TargetChoices t = m.copyTargets(seat, ability, filter);
+        if (t != null || optional && !m.hasCopyTargets(seat)) {
+            return t; // null keeps the old targets
+        }
         m.miss("new targets", String.valueOf(ability));
         return super.chooseNewTargetsFor(ability, filter, optional);
     }
@@ -277,6 +283,12 @@ public class ScriptedController extends PlayerControllerAi {
         Boolean clone = m.cloneReplacement(seat);
         if (clone != null) {
             return clone;
+        }
+        if (m.step() < 0 && !m.hasSetupYesNo(seat)) {
+            // Setup placement: gorge's xmageFixture places a clone as itself
+            // unless a setup answer (step -1) says otherwise.
+            m.note("setup replacement declined (gorge logged no setup answer): " + question);
+            return false;
         }
         Boolean b = m.yesNo(seat, "replacement " + question);
         return b != null ? b : super.confirmReplacementEffect(replacementEffect, effectSA, affected, question);
