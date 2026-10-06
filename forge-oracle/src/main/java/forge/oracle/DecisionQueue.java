@@ -178,7 +178,7 @@ public final class DecisionQueue {
     /** A yes/no answer: a trigger_optional "yesno" or a choose whose single
      * pick is a yes/no label. */
     public static boolean isYesNo(Decision d) {
-        if (d.kind.equals("yesno")) {
+        if (d.kind.equals("yesno") || isPlayChoice(d)) {
             return true;
         }
         if (!d.kind.equals("choose_n") || d.picks.size() != 1) {
@@ -206,7 +206,16 @@ public final class DecisionQueue {
         return null;
     }
 
+    /** gorge's "you may play/cast it" ask (resume "play"): an empty answer
+     * declines, a pick plays. */
+    public static boolean isPlayChoice(Decision d) {
+        return d.resume.equals("play") && (d.kind.equals("mode") || d.kind.equals("choose_n"));
+    }
+
     public static boolean yes(Decision d) {
+        if (isPlayChoice(d)) {
+            return !d.picks.isEmpty();
+        }
         if (d.picks.isEmpty()) {
             return false; // an empty answer to an optional ask declines it
         }

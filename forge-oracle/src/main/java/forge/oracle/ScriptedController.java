@@ -110,6 +110,26 @@ public class ScriptedController extends PlayerControllerAi {
         if (abilities.size() == 1) {
             return abilities.get(0);
         }
+        // An either-or additional cost (AlternateAdditionalCost: forage, ...):
+        // gorge's altaddcost pick names the cost; Forge offers one SA per cost.
+        Decision d = take(x -> x.pickKinds.contains("altaddcost") && x.picks.size() == 1);
+        if (d != null) {
+            String want = d.picks.get(0).toLowerCase(java.util.Locale.ROOT);
+            SpellAbility hit = null;
+            int n = 0;
+            for (SpellAbility sa : abilities) {
+                String cost = sa.getPayCosts() == null ? "" : sa.getPayCosts().toString().toLowerCase(java.util.Locale.ROOT);
+                String desc = String.valueOf(sa).toLowerCase(java.util.Locale.ROOT);
+                if (cost.contains(want) || desc.contains(want)) {
+                    hit = sa;
+                    n++;
+                }
+            }
+            if (n == 1) {
+                m.note("ability choice step " + m.step() + ": " + d.picks.get(0));
+                return hit;
+            }
+        }
         m.miss("ability choice", "getAbilityToPlay over " + abilities.size() + " abilities of " + hostCard);
         return super.getAbilityToPlay(hostCard, abilities, triggerEvent);
     }
@@ -221,6 +241,27 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public boolean confirmAction(SpellAbility sa, PlayerActionConfirmMode mode, String message, List<String> options, Card cardToShow, Map<String, Object> params) {
+        if (mode == PlayerActionConfirmMode.ChangeZoneToAltDestination && options != null && options.size() == 2) {
+            // true keeps the first destination (ChangeZoneEffect): gorge's
+            // changezone_alternative pick names it ("top" / "bottom", a zone).
+            Decision d = take(x -> x.resume.equals("changezone_alternative") && x.picks.size() == 1);
+            if (d != null) {
+                String pick = d.picks.get(0).trim().toLowerCase(java.util.Locale.ROOT);
+                boolean first = options.get(0).toLowerCase(java.util.Locale.ROOT).startsWith(pick);
+                boolean second = options.get(1).toLowerCase(java.util.Locale.ROOT).startsWith(pick);
+                if (first != second) {
+                    m.note("alt destination step " + m.step() + ": " + d.picks.get(0));
+                    return first;
+                }
+            }
+        }
+        if (mode == PlayerActionConfirmMode.ChangeZoneGeneral && message != null && message.startsWith("Cancel Search")) {
+            // Forge asks after each searched card; gorge made one pick of up to N.
+            Boolean more = m.searchWantsMore(seat);
+            if (more != null) {
+                return !more;
+            }
+        }
         Boolean b = m.yesNo(seat, "confirm " + mode + ": " + message);
         return b != null ? b : super.confirmAction(sa, mode, message, options, cardToShow, params);
     }
@@ -271,6 +312,17 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public boolean payCostToPreventEffect(Cost cost, SpellAbility sa, boolean alreadyPaid, FCollectionView<Player> allPayers) {
+        // gorge poses "unless pays" as a mode ask (resume unless_pay): "Pay 2",
+        // "Pay the cost", or "Don't pay". A pay answer pays through the
+        // engine's own resolve-time payment (from this seat's pool).
+        Decision d = take(x -> x.resume.equals("unless_pay") && x.picks.size() == 1);
+        if (d != null) {
+            String pick = d.picks.get(0).trim().toLowerCase(java.util.Locale.ROOT);
+            boolean pay = pick.startsWith("pay");
+            boolean paid = pay && PlaySpellAbility.payCostDuringAbilityResolve(this, player, cost, sa, null);
+            m.note("unless-pay step " + m.step() + ": " + d.picks.get(0) + (pay ? " paid=" + paid : ""));
+            return paid;
+        }
         m.miss("unless-pay", cost.toSimpleString() + " for " + sa);
         return super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers);
     }
@@ -765,7 +817,21 @@ public class ScriptedController extends PlayerControllerAi {
         if (possibleReplacers.size() == 1) {
             return possibleReplacers.get(0);
         }
-        return missThen("replacement order", () -> super.chooseSingleReplacementEffect(possibleReplacers));
+        // gorge poses a "replacement" decision only when the order is
+        // observable (decision.KReplacement); with none logged it applied them
+        // in its own fixed order, so take Forge's first, deterministically.
+        Decision d = take(x -> x.gorgeKind.equals("replacement") && x.picks.size() == 1);
+        if (d != null) {
+            for (ReplacementEffect re : possibleReplacers) {
+                if (StepMachine.norm(String.valueOf(re), re.getHostCard().getName())
+                        .startsWith(StepMachine.norm(d.picks.get(0), re.getHostCard().getName()))) {
+                    return re;
+                }
+            }
+            m.miss("replacement order", "gorge pick " + d.picks.get(0) + " matches no replacement");
+        }
+        m.note("replacement order step " + m.step() + ": first of " + possibleReplacers.size() + " (gorge logged none)");
+        return possibleReplacers.get(0);
     }
 
     @Override
