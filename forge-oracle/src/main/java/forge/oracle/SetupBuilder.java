@@ -32,8 +32,9 @@ import forge.item.PaperCard;
  *     card binds its setup ref.</li>
  * <li>Battlefield placement fires NO entry triggers: ChangesZone and
  *     ChangesZoneAll are suppressed while placing, and so is CounterAdded
- *     while a Saga enters (its chapter abilities are CounterAdded triggers with
- *     Chapter$, CardFactoryUtil "Chapter"). Every other trigger the placement
+ *     while a Saga that setup flips to its back face enters (its chapter
+ *     abilities are CounterAdded triggers with Chapter$). A front-face Saga
+ *     keeps chapter I (gorge f788f3c31). Every other trigger the placement
  *     causes STAYS live: a planeswalker's entry loyalty counters fire
  *     CounterAdded/CounterAddedOnce triggers on permanents already placed
  *     (Inspired Tethermage watching Ajani Goldmane), as gorge keeps them
@@ -110,7 +111,7 @@ final class SetupBuilder {
         for (String n : bf) {
             Card c = create(m, n, p);
             m.refs.bind(i, n, c.getId());
-            putOntoBattlefield(m.game, p, c);
+            putOntoBattlefield(m.game, p, c, containsName(backFace, n));
             unlockNamedDoor(m.game, p, c, n);
             if (containsName(backFace, n)) {
                 flipToBack(c, n);
@@ -191,9 +192,12 @@ final class SetupBuilder {
     /** Hand first, then a real move to the battlefield, so ETB replacement
      * effects (enters tapped, as-enters choices, entry counters) apply as
      * gorge's MoveZone applies them. A Saga's own chapter trigger is held off. */
-    static void putOntoBattlefield(Game game, Player p, Card c) {
+    static void putOntoBattlefield(Game game, Player p, Card c, boolean backFace) {
         p.getZone(ZoneType.Hand).add(c);
-        boolean saga = c.getType().hasSubtype("Saga");
+        // gorge f788f3c31: a front-face Saga keeps its entry chapter I trigger
+        // (XMage's addCard adds the lore counter and chapter I fires); only a
+        // back-face placement, a permanent with no chapter abilities, drops it.
+        boolean saga = backFace && c.getType().hasSubtype("Saga");
         if (saga) {
             game.getTriggerHandler().suppressMode(TriggerType.CounterAdded);
         }
