@@ -22,4 +22,4 @@ mkdir -p "$OUT/classes" "$OUT/tmp"
 TESTS=$(cd "$HERE/src/test/java" && find . -name '*Test.java' | sed 's|^\./||; s|\.java$||; s|/|.|g' | sort | paste -sd, -)
 exec "$JAVA" -Xmx1536m -XX:+UseSerialGC -Djava.awt.headless=true -Dtinylog.level=warn -Djava.io.tmpdir="$OUT/tmp" \
   -Dforge.oracle.res="${FORGE_RES:-$HERE/../forge-gui/res}" \
-  -cp "$OUT/classes:$CP" org.testng.TestNG -usedefaultlisteners false -d "$OUT/testng" -testclass "$TESTS" "$@"
+  -cp "$OUT/classes:$CP" org.testng.TestNG -usedefaultlisteners false -listener forge.oracle.FailurePrinter -d "$OUT/testng" -testclass "$TESTS" "$@"
