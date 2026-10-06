@@ -111,4 +111,27 @@ public class DecisionQueueTest {
         assertNull(d.take(0, x -> x.seat == 0 && DecisionQueue.isTarget(x)));
         assertTrue(d.take(0, x -> x.seat == 1 && DecisionQueue.isTarget(x)) != null);
     }
+    static final String CHARM = "{\"step\":0,\"seat\":0,\"kind\":\"target\",\"picks\":[\"Amrou Scout (a)\",\"b\"],"
+            + "\"pick_refs\":[\"p0:Amrou Scout\",\"p1\"],\"object_picks\":[\"p0:Amrou Scout\"],"
+            + "\"pick_kinds\":[\"permanent\",\"player\"],\"resume\":\"charm_targets\",\"gorge_kind\":\"target\",\"min\":2,\"max\":2}";
+    static final String ELVES = "{\"step\":0,\"seat\":0,\"kind\":\"choose_n\",\"picks\":[\"Activate Llanowar Elves for mana\"],"
+            + "\"pick_refs\":[\"p0:Llanowar Elves\"],\"object_picks\":[\"p0:Llanowar Elves\"],\"pick_kinds\":[\"activate\"],\"gorge_kind\":\"choose\"}";
+
+    @Test
+    public void charmTargetRefsKeepThePlayer() {
+        // object_picks drops the player; the refs a mixed charm ask binds must not.
+        Decision d = q(CHARM).all().get(0);
+        assertEquals(d.refs(), List.of("p0:Amrou Scout", "p1"));
+        assertEquals(d.resume, "charm_targets");
+    }
+
+    @Test
+    public void paymentWindowAsksAreNeverLeftover() {
+        DecisionQueue d = q(PAY_G, ELVES, X);
+        assertTrue(DecisionQueue.isPaymentWindow(d.all().get(0)));
+        assertTrue(DecisionQueue.isPaymentWindow(d.all().get(1)));
+        assertFalse(DecisionQueue.isPaymentWindow(d.all().get(2)));
+        assertEquals(d.unconsumed().size(), 1);
+        assertTrue(d.leftover().contains("choose_n[x]"), d.leftover());
+    }
 }

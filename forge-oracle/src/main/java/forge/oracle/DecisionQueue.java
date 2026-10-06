@@ -30,6 +30,7 @@ public final class DecisionQueue {
         public final String kind;
         public final String gorgeKind;
         public final String via;
+        public final String resume;
         public final List<String> picks;
         public final List<String> pickRefs;
         public final List<String> objectPicks;
@@ -45,6 +46,7 @@ public final class DecisionQueue {
             kind = Request.str(o, "kind");
             gorgeKind = Request.str(o, "gorge_kind");
             via = Request.str(o, "via");
+            resume = Request.str(o, "resume");
             picks = Request.strings(o, "picks");
             pickRefs = Request.strings(o, "pick_refs");
             objectPicks = Request.strings(o, "object_picks");
@@ -61,16 +63,18 @@ public final class DecisionQueue {
         /** The object refs of a pick: object_picks when present, else the
          * pick_refs that look like refs. */
         public List<String> refs() {
-            if (!objectPicks.isEmpty()) {
-                return objectPicks;
-            }
+            // pick_refs carries players too ("p1"); object_picks only objects.
+            // A charm's one target ask mixes both (Brigid's Command).
             List<String> out = new ArrayList<>();
             for (String r : pickRefs) {
                 if (RefTable.parseSeat(r.contains(":") ? r.substring(0, r.indexOf(':')) : r) >= 0) {
                     out.add(r);
                 }
             }
-            return out;
+            if (out.size() >= objectPicks.size() && out.containsAll(objectPicks)) {
+                return out;
+            }
+            return objectPicks;
         }
 
         public String describe() {
@@ -109,10 +113,27 @@ public final class DecisionQueue {
         return null;
     }
 
+    /** gorge's payment-window asks (contract, gorge cmd/oraclediff/forge.go):
+     * the hybrid/Phyrexian pip choice (pick kinds pay_&lt;C&gt;, pay_generic,
+     * pay_life) and a mana ability activated while paying (pick kind
+     * "activate"). Forge pays from the pool and poses neither, so they are
+     * never leftover. */
+    public static boolean isPaymentWindow(Decision d) {
+        if (d.pickKinds.isEmpty()) {
+            return false;
+        }
+        for (String k : d.pickKinds) {
+            if (!k.startsWith("pay_") && !k.equals("activate")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public List<Decision> unconsumed() {
         List<Decision> out = new ArrayList<>();
         for (Decision d : all) {
-            if (!d.consumed) {
+            if (!d.consumed && !isPaymentWindow(d)) {
                 out.add(d);
             }
         }
