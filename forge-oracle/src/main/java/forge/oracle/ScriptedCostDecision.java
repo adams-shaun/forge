@@ -153,9 +153,25 @@ public class ScriptedCostDecision extends AiCostDecision {
         return choice(cost, super.visit(cost));
     }
 
+    /** Forage: gorge logs which way (forage_exile / a Food sacrifice) and then
+     * the cards; Forge's decision is just the cards (three from the graveyard,
+     * or one Food). */
     @Override
     public PaymentDecision visit(CostForage cost) {
-        return choice(cost, super.visit(cost));
+        if (m.take(seat, d -> d.pickKinds.contains("trigger_cost_decline")) != null) {
+            m.note("forage declined (gorge: trigger_cost_decline)");
+            return null;
+        }
+        boolean exile = m.take(seat, d -> d.pickKinds.contains("forage_exile")) != null;
+        CardCollectionView list = exile
+                ? CardLists.filter(player.getCardsIn(ZoneType.Graveyard), CardPredicates.canExiledBy(ability, isEffect()))
+                : CardLists.filter(player.getCardsIn(ZoneType.Battlefield), CardPredicates.isType("Food"), CardPredicates.canBeSacrificedBy(ability, isEffect()));
+        int n = exile ? 3 : 1;
+        List<Card> picked = m.pickObjects(seat, list, n, n, "cost CostForage");
+        if (picked != null && picked.size() == n) {
+            return PaymentDecision.card(picked);
+        }
+        return m.strict() ? null : super.visit(cost);
     }
 
     @Override

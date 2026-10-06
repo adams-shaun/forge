@@ -1499,8 +1499,47 @@ public final class StepMachine {
         return true;
     }
 
+    boolean hasCopyTargets(int seat) {
+        for (int st : decisionSteps()) {
+            if (dq.peek(st, x -> x.seat == seat && DecisionQueue.isTarget(x) && x.resume.equals("copy_targets")) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    forge.game.spellability.TargetChoices copyTargets(int seat, SpellAbility ability, Predicate<GameObject> filter) {
+        SpellAbility sa = ability.isWrapper() ? ((forge.game.trigger.WrappedAbility) ability).getWrappedAbility() : ability;
+        if (!sa.usesTargeting()) {
+            return null;
+        }
+        Decision d = take(seat, x -> DecisionQueue.isTarget(x) && x.resume.equals("copy_targets"));
+        if (d == null) {
+            return null;
+        }
+        forge.game.spellability.TargetChoices old = sa.getTargets();
+        sa.clearTargets();
+        for (String ref : d.refs()) {
+            GameObject o = targetObject(ref);
+            if ((filter == null || filter.test(o)) && sa.canTarget(o)) {
+                sa.getTargets().add(o);
+            }
+        }
+        if (sa.getTargets().size() < sa.getMinTargets()) {
+            sa.setTargets(old);
+            miss("new targets", "gorge copy targets " + d.refs() + " not legal for " + sa);
+            return null;
+        }
+        note("copy targets step " + stepIdx + ": " + d.refs());
+        return sa.getTargets();
+    }
+
+    boolean hasSetupYesNo(int seat) {
+        return dq.peek(-1, x -> x.seat == seat && DecisionQueue.isYesNo(x)) != null;
+    }
+
     String chooseLabel(int seat, Collection<String> options, String what) {
-        Decision d = take(seat, x -> x.kind.equals("choose_n") && x.picks.size() == 1 && containsIgnoreCase(options, x.picks.get(0)));
+        Decision d = take(seat, x -> (x.kind.equals("choose_n") || x.kind.equals("mode")) && x.picks.size() == 1 && containsIgnoreCase(options, x.picks.get(0)));
         if (d == null) {
             return null;
         }
