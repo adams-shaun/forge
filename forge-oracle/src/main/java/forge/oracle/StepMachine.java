@@ -719,6 +719,31 @@ public final class StepMachine {
     }
 
     private SpellAbility identity(String tier, List<SpellAbility> hits, List<SpellAbility> all, String line) {
+        if (hits.size() > 1) {
+            // Same API and cost (a Class's level-ups): the most equal params.
+            Map<String, String> want = AbilityFactory.getMapParams(line);
+            int best = -1;
+            List<SpellAbility> top = new ArrayList<>();
+            for (SpellAbility sa : hits) {
+                int n = 0;
+                for (Map.Entry<String, String> e : want.entrySet()) {
+                    if (e.getValue().equals(sa.getParam(e.getKey()))) {
+                        n++;
+                    }
+                }
+                if (n > best) {
+                    best = n;
+                    top.clear();
+                }
+                if (n == best) {
+                    top.add(sa);
+                }
+            }
+            if (top.size() == 1) {
+                note("identity: " + tier + "+params at step " + stepIdx);
+                return top.get(0);
+            }
+        }
         if (hits.size() == 1) {
             note("identity: " + tier + " at step " + stepIdx);
             return hits.get(0);
@@ -1079,6 +1104,44 @@ public final class StepMachine {
             out.add(hit);
         }
         note("modes step " + stepIdx + ": " + d.picks);
+        return out;
+    }
+
+    /** A GenericChoice ("choose one": Food or Treasure; the punisher's
+     * "lose 4 life unless ..." per player): gorge logs a mode ask (resume
+     * modes / generic_players) whose labels are the choices' descriptions. */
+    List<SpellAbility> chooseGenericModes(int seat, List<SpellAbility> spells, int num) {
+        Decision d = take(seat, x -> x.kind.equals("mode") && !x.picks.isEmpty() && x.picks.size() <= num
+                && !x.resume.equals("unless_pay") && !x.resume.equals("cast_modes"));
+        if (d == null) {
+            return null;
+        }
+        List<SpellAbility> out = new ArrayList<>();
+        for (String label : d.picks) {
+            SpellAbility hit = null;
+            for (SpellAbility sp : spells) {
+                if (out.contains(sp)) {
+                    continue;
+                }
+                String host = sp.getHostCard() == null ? "" : sp.getHostCard().getName();
+                String want = norm(label, host);
+                for (String c : new String[] {sp.getParam("SpellDescription"), sp.getDescription(), String.valueOf(sp)}) {
+                    if (c != null && !want.isEmpty() && (norm(c, host).startsWith(want) || want.startsWith(norm(c, host)) && norm(c, host).length() >= 3)) {
+                        hit = sp;
+                        break;
+                    }
+                }
+                if (hit != null) {
+                    break;
+                }
+            }
+            if (hit == null) {
+                miss("generic choice", "gorge choice \"" + label + "\" matches no Forge choice");
+                return null;
+            }
+            out.add(hit);
+        }
+        note("generic choice step " + stepIdx + ": " + d.picks);
         return out;
     }
 
