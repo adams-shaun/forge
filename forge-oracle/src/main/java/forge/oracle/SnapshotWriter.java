@@ -13,6 +13,7 @@ import com.google.common.collect.Multiset;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
+import forge.card.CardStateName;
 import forge.card.CardType;
 import forge.card.CardTypeView;
 import forge.card.ColorSet;
@@ -129,6 +130,20 @@ public final class SnapshotWriter {
         return out;
     }
 
+    /** The name gorge's snapshot gives a card outside the battlefield: its
+     * printed (face 0) name. A face-down card (hideaway, foretell) is still
+     * named, as gorge and the XMage driver name it there; a split or Room card
+     * is named by its first half, gorge's face 0. */
+    public static String zoneName(Card c) {
+        if (c.isFaceDown() && c.hasState(CardStateName.Original)) {
+            return c.getState(CardStateName.Original).getName();
+        }
+        if (c.isSplitCard() && c.getCurrentStateName() == CardStateName.Original && c.hasState(CardStateName.LeftSplit)) {
+            return c.getState(CardStateName.LeftSplit).getName();
+        }
+        return c.getName();
+    }
+
     // ---- the snapshot ------------------------------------------------------
 
     public static JsonObject snapshot(String checkpoint, Game game, Player[] seats) {
@@ -158,7 +173,7 @@ public final class SnapshotWriter {
             JsonObject o = new JsonObject();
             o.addProperty("kind", si.isSpell() ? "spell" : "ability");
             Card src = si.getSourceCard();
-            o.addProperty("source", src == null ? "?" : src.getName());
+            o.addProperty("source", src == null ? "?" : zoneName(src));
             o.addProperty("controller", seatOf(seats, si.getActivatingPlayer()));
             stack.add(o);
         }
@@ -190,7 +205,7 @@ public final class SnapshotWriter {
         for (Player q : seats) {
             for (Card c : q.getCardsIn(ZoneType.Exile)) {
                 if (c.getOwner() == p) {
-                    ex.add(c.getName());
+                    ex.add(zoneName(c));
                 }
             }
         }
@@ -204,7 +219,7 @@ public final class SnapshotWriter {
         po.addProperty("library_count", lib.size());
         JsonArray top = new JsonArray();
         for (int k = 0; k < lib.size() && k < LIBRARY_TOP_N; k++) {
-            top.add(lib.get(k).getName());
+            top.add(zoneName(lib.get(k)));
         }
         po.add("library_top", top);
         int[] amounts = new int[6];
@@ -274,7 +289,7 @@ public final class SnapshotWriter {
     private static JsonArray names(Iterable<Card> cs, boolean sorted) {
         List<String> ns = new ArrayList<>();
         for (Card c : cs) {
-            ns.add(c.getName());
+            ns.add(zoneName(c));
         }
         if (sorted) {
             Collections.sort(ns);
