@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- forge-oracle: the headless oracle driver (gorge's Forge oracle harness).
+     A standalone project beside the upstream modules: it never edits them and
+     is not in the root reactor, so a FORGE_REF bump merges cleanly.
+     This POM only DOCUMENTS the dependencies. It does not resolve on its own:
+     the upstream modules' installed POMs keep ${revision} unflattened (no
+     flatten plugin), so forge:forge:pom:${revision} cannot be found in the
+     local repository (measured 2026-10-06, P0-REPORT surprise 6). The build
+     and test gate is run-unit-tests.sh / scripts/javac.sh, which compile
+     against the reactor classpath recorded in $FORGE_ORACLE_DIR/cp.txt. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <artifactId>forge</artifactId>
+        <groupId>forge</groupId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+    <artifactId>forge-oracle</artifactId>
+    <name>Forge Oracle Driver</name>
+    <dependencies>
+        <dependency>
+            <groupId>forge</groupId>
+            <artifactId>forge-ai</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.13.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <version>7.10.2</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
