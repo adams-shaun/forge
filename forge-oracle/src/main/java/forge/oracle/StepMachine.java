@@ -11,6 +11,7 @@ import java.util.function.Predicate;
 
 import com.google.common.collect.Lists;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import forge.card.mana.ManaAtom;
@@ -255,10 +256,209 @@ public final class StepMachine {
                     }
                     acted = true;
                     return null; // pass
+                case "pass":
+                    // gorge's pass answers exactly one priority decision of the
+                    // named seat; the checkpoint is the next priority (the
+                    // opponent's, or the active player's after a resolution).
+                    if (!acted) {
+                        if (p != seats[seat]) {
+                            throw new HarnessError("pass: p" + seat + " does not hold priority at step " + stepIdx
+                                    + " (p" + SnapshotWriter.seatOf(seats, p) + " does)");
+                        }
+                        acted = true;
+                        return null;
+                    }
+                    complete(op);
+                    continue;
+                case "pass_to":
+                    if (passToReached(st, ph)) {
+                        complete(op);
+                        continue;
+                    }
+                    acted = true; // gorge answers at least one decision before a step stop
+                    return null;
+                case "attack":
+                case "block":
+                    // The declaration happens in the declareAttackers/Blockers
+                    // callback; until then every priority passes, as gorge's
+                    // runner answers "to-attack"/"to-block". The checkpoint is
+                    // the first priority after the declaration.
+                    if (!acted) {
+                        if (op.equals("attack") && pastDeclare(ph, seats[seat], PhaseType.COMBAT_DECLARE_ATTACKERS)) {
+                            throw new HarnessError("attack: passed declare-attackers without being asked (step " + stepIdx + ")");
+                        }
+                        if (op.equals("block") && ph.getPhase() != null
+                                && ph.getPhase().isAfter(PhaseType.COMBAT_DECLARE_BLOCKERS) && ph.inCombat()) {
+                            throw new HarnessError("block: passed declare-blockers without being asked (step " + stepIdx + ")");
+                        }
+                        return null;
+                    }
+                    complete(op);
+                    continue;
+                case "move":
+                case "attach":
+                    // A direct state change, as gorge's runner emits it; then
+                    // one empty priority round so state-based actions and any
+                    // trigger reach the stack before the checkpoint (gorge's
+                    // priorityRound + untilPriority).
+                    if (!acted) {
+                        if (op.equals("move")) {
+                            move(st);
+                        } else {
+                            attach(st);
+                        }
+                        acted = true;
+                        return new ArrayList<>();
+                    }
+                    complete(op);
+                    continue;
                 default:
                     throw new HarnessError("op " + op + " unsupported by the Forge driver (step " + stepIdx + ")");
             }
         }
+    }
+
+    /** gorge's pass_to stop (rules/oracle_run.go oracleOpPassTo): a pending
+     * decision of the named kind (checked first, even before any answer), or
+     * -- after at least one answer -- the named step with the named active
+     * seat. At a priority callback the only pending kind is "priority"; the
+     * attackers/blockers kinds stop inside those callbacks. */
+    private boolean passToReached(JsonObject st, PhaseHandler ph) {
+        String decision = Request.str(st, "decision");
+        if (decision.equals("priority")) {
+            return true;
+        }
+        if (!decision.isEmpty() && !decision.equals("attackers") && !decision.equals("blockers")) {
+            throw new HarnessError("pass_to decision " + decision + " unsupported (step " + stepIdx + ")");
+        }
+        String want = Request.str(st, "step");
+        if (want.isEmpty() || !acted) {
+            return false;
+        }
+        if (!want.equals(SnapshotWriter.stepName(ph.getPhase()))) {
+            return false;
+        }
+        String active = Request.str(st, "active");
+        return active.isEmpty() || ph.getPlayerTurn() == seats[RefTable.parseSeat(active)];
+    }
+
+    private boolean pastDeclare(PhaseHandler ph, Player attacker, PhaseType declare) {
+        return ph.getPlayerTurn() == attacker && ph.getPhase() != null && ph.getPhase().isAfter(declare)
+                && !ph.getPhase().isAfter(PhaseType.COMBAT_END);
+    }
+
+    // ---- combat callbacks ------------------------------------------------
+
+    /** declareAttackers: the attack step's plan, or a pass_to stop on the
+     * attackers decision (snapshot taken here, before anything is declared),
+     * or no attack. */
+    void declareAttackers(Player attacker, forge.game.combat.Combat combat) {
+        try {
+            while (!done && failure == null && stepIdx >= 0 && stepIdx < steps.size()) {
+                JsonObject st = steps.get(stepIdx).getAsJsonObject();
+                String op = Request.str(st, "op");
+                int seat = st.has("seat") ? st.get("seat").getAsInt() : 0;
+                if (op.equals("pass_to") && Request.str(st, "decision").equals("attackers")) {
+                    complete(op);
+                    continue;
+                }
+                if (op.equals("attack") && !acted && attacker == seats[seat]) {
+                    String defRef = Request.str(st, "defender");
+                    int def = RefTable.parseSeat(defRef);
+                    if (def < 0 || def >= seats.length) {
+                        throw new HarnessError("attack: bad defender " + defRef);
+                    }
+                    for (String a : Request.strings(st, "attackers")) {
+                        Card c = card(a);
+                        if (!forge.game.combat.CombatUtil.canAttack(c, seats[def])) {
+                            throw new HarnessError("attack: " + a + " at " + defRef + " not offered (step " + stepIdx + ")");
+                        }
+                        combat.addAttacker(c, seats[def]);
+                    }
+                    acted = true;
+                    note("attack step " + stepIdx + ": " + Request.strings(st, "attackers") + " -> " + defRef);
+                    return;
+                }
+                if (op.equals("attack") && acted) {
+                    throw new HarnessError("attack declaration invalid in Forge (step " + stepIdx + ")");
+                }
+                return; // no attack this combat
+            }
+        } catch (RuntimeException e) {
+            throw fail(e);
+        }
+    }
+
+    /** declareBlockers: the block step's [blocker, attacker] pairs, or a
+     * pass_to stop on the blockers decision (the snapshot is taken inside
+     * this callback, as gorge's checkpoint sits on the pending decision). */
+    void declareBlockers(Player defender, forge.game.combat.Combat combat) {
+        try {
+            while (!done && failure == null && stepIdx >= 0 && stepIdx < steps.size()) {
+                JsonObject st = steps.get(stepIdx).getAsJsonObject();
+                String op = Request.str(st, "op");
+                int seat = st.has("seat") ? st.get("seat").getAsInt() : 0;
+                if (op.equals("pass_to") && (Request.str(st, "decision").equals("blockers")
+                        || (acted && Request.str(st, "step").equals("declare-blockers")))) {
+                    complete(op);
+                    continue;
+                }
+                if (op.equals("block") && !acted && defender == seats[seat]) {
+                    for (JsonElement e : st.getAsJsonArray("blocks")) {
+                        JsonArray pair = e.getAsJsonArray();
+                        Card b = card(pair.get(0).getAsString());
+                        Card a = card(pair.get(1).getAsString());
+                        if (!combat.isAttacking(a) || !forge.game.combat.CombatUtil.canBlock(a, b, combat)) {
+                            throw new HarnessError("block: " + pair.get(0).getAsString() + " on " + pair.get(1).getAsString()
+                                    + " not offered (step " + stepIdx + ")");
+                        }
+                        combat.addBlocker(a, b);
+                    }
+                    acted = true;
+                    note("block step " + stepIdx + ": " + st.get("blocks"));
+                    return;
+                }
+                if (op.equals("block") && acted) {
+                    throw new HarnessError("block declaration invalid in Forge (step " + stepIdx + ")");
+                }
+                return;
+            }
+        } catch (RuntimeException e) {
+            throw fail(e);
+        }
+    }
+
+    private void move(JsonObject st) {
+        String ref = Request.str(st, "card");
+        Card c = card(ref);
+        ZoneType to;
+        switch (Request.str(st, "to")) {
+            case "library": to = ZoneType.Library; break;
+            case "hand": to = ZoneType.Hand; break;
+            case "battlefield": to = ZoneType.Battlefield; break;
+            case "graveyard": to = ZoneType.Graveyard; break;
+            case "exile": to = ZoneType.Exile; break;
+            default: throw new HarnessError("move: zone " + Request.str(st, "to") + " unsupported");
+        }
+        Card moved = game.getAction().moveTo(to, c, null, null);
+        if (moved == null || !moved.isInZone(to)) {
+            throw new HarnessError("move " + ref + " to " + to + " refused");
+        }
+        note("move step " + stepIdx + ": " + ref + " -> " + to);
+    }
+
+    private void attach(JsonObject st) {
+        Card a = card(Request.str(st, "card"));
+        GameEntity bearer = entity(Request.str(st, "attached_to"));
+        if (!a.isInZone(ZoneType.Battlefield)) {
+            throw new HarnessError("attach: " + Request.str(st, "card") + " is not on the battlefield");
+        }
+        a.attachToEntity(bearer, null);
+        if (a.getEntityAttachedTo() != bearer) {
+            throw new HarnessError("attach " + Request.str(st, "card") + " to " + Request.str(st, "attached_to") + " refused");
+        }
+        game.getAction().checkStaticAbilities();
+        note("attach step " + stepIdx + ": " + Request.str(st, "card") + " -> " + Request.str(st, "attached_to"));
     }
 
     private void complete(String op) {
