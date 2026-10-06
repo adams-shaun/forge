@@ -59,6 +59,7 @@ import forge.oracle.DecisionQueue.Decision;
  */
 public final class StepMachine {
     static final int LOOP_GUARD = 4000;
+    static final int TURN_SLACK = 4;
 
     final Request req;
     final boolean strict;
@@ -149,8 +150,12 @@ public final class StepMachine {
                 throw new HarnessError("no progress after " + LOOP_GUARD + " loop steps at step " + stepIdx);
             }
             ph.mainLoopStep();
-            if (ph.getTurn() > targetTurn) {
-                throw new HarnessError("passed turn " + targetTurn + " at step " + stepIdx);
+            // Setup must stop on the scenario turn. A step may legitimately move
+            // on (pass_to a later turn, an off-turn attack, an end-the-turn
+            // resolve), but never far: gorge's own loop caps it the same way.
+            int cap = stepIdx < 0 ? targetTurn : targetTurn + TURN_SLACK;
+            if (ph.getTurn() > cap) {
+                throw new HarnessError("passed turn " + cap + " at step " + stepIdx);
             }
         }
         if (failure != null) {
@@ -241,7 +246,10 @@ public final class StepMachine {
                     complete(op);
                     continue;
                 case "resolve":
-                    if (game.getStack().isEmpty() && p == ph.getPlayerTurn()) {
+                    // Never at a cleanup priority: an end-the-turn effect (Time
+                    // Stop) gives one there, but gorge's resolve stops at the next
+                    // turn's first priority (the XMage driver's endTurnScenario).
+                    if (game.getStack().isEmpty() && p == ph.getPlayerTurn() && !ph.is(PhaseType.CLEANUP)) {
                         complete(op);
                         continue;
                     }
@@ -268,6 +276,9 @@ public final class StepMachine {
         }
         stepTargets = new ArrayList<>(Request.strings(st, "targets"));
         Card c = card(Request.str(st, "card"));
+        if (!op.equals("play")) {
+            payingManaSources(p);
+        }
         SpellAbility sa;
         switch (op) {
             case "cast": sa = spellFor(c, st); break;
@@ -279,6 +290,34 @@ public final class StepMachine {
         actedSa = sa;
         actedHostId = c.getId();
         return Lists.newArrayList(sa);
+    }
+
+    /** gorge activated these mana sources inside the payment window (pick
+     * kind "activate", object_picks naming the source). The driver pays from
+     * the pool only, so it activates them first, at priority: the mana floats
+     * into the pool and the cast that follows spends it. Same end state. */
+    private void payingManaSources(Player p) {
+        while (true) {
+            Decision d = take(SnapshotWriter.seatOf(seats, p), x -> x.pickKinds.size() == 1 && x.pickKinds.get(0).equals("activate") && !x.objectPicks.isEmpty());
+            if (d == null) {
+                return;
+            }
+            Card src = card(d.objectPicks.get(0));
+            SpellAbility ma = null;
+            for (SpellAbility a : src.getManaAbilities()) {
+                a.setActivatingPlayer(p);
+                if (a.canPlay()) {
+                    ma = a;
+                    break;
+                }
+            }
+            if (ma == null) {
+                throw new HarnessError("step " + stepIdx + " payment source " + d.objectPicks.get(0) + " has no playable mana ability");
+            }
+            ma.setActivatingPlayer(p);
+            boolean ok = forge.game.player.PlaySpellAbility.playSpellAbility(p.getController(), p, ma);
+            note("payment source step " + stepIdx + ": " + d.objectPicks.get(0) + " activated=" + ok + " pool=" + p.getManaPool().totalMana());
+        }
     }
 
     /** Priority came back to the acting seat: did the action happen? */
@@ -440,53 +479,209 @@ public final class StepMachine {
         }
     }
 
+    /**
+     * Target binding by target SPEC, not by log order (P1-8 ticket 2). gorge
+     * logs one target decision per ask; Forge asks once per targeting
+     * (sub-)ability, in its own order: a charm's two modes come as one gorge
+     * decision with two refs, and a trigger whose leading "up to one" slot
+     * had no candidate is logged without that slot. So each Forge ask takes,
+     * from this step's unconsumed target refs in log order, the refs this
+     * ability can legally target, up to its max; the rest stay for the next
+     * ask. A ref used here is not offered again.
+     */
     private boolean targets(ScriptedController ctl, SpellAbility sa) {
-        Decision d = take(ctl.seat, DecisionQueue::isTarget);
-        List<String> want;
-        if (d != null) {
-            want = d.refs();
-        } else if (!stepTargets.isEmpty()) {
-            // A bare Item (no sidecar decisions): the step's own target refs.
-            want = new ArrayList<>(stepTargets);
+        int min = sa.getMinTargets();
+        int max = Math.max(sa.getMaxTargets(), 0);
+        if (req.decisions.isEmpty() && !stepTargets.isEmpty()) {
+            // A bare Item (hand fixture, no sidecar decisions): the step's own refs.
+            List<String> want = new ArrayList<>(stepTargets);
             stepTargets.clear();
             note("targets from the step at step " + stepIdx + ": " + want);
-        } else if (sa.getTargetRestrictions() == null || !sa.getTargetRestrictions().hasCandidates(sa)) {
-            // Nothing to target: gorge poses no decision either (an "up to"
-            // slot stays empty; a mandatory one leaves the trigger off the stack).
-            note("target step " + stepIdx + ": no candidate for " + sa.getHostCard());
-            return sa.getMinTargets() == 0;
-        } else {
-            miss("target", String.valueOf(sa));
-            return false; // loose: no scripted target; the cast fails visibly
+            bindRefs(sa, want, Math.max(max, 1), null);
+            return finishTargets(sa);
         }
-        int max = Math.max(sa.getMaxTargets(), 1);
-        for (String ref : want) {
+        List<Decision> pending = new ArrayList<>();
+        for (Decision d : dq.all()) {
+            if (!d.isConsumed() && d.step == stepIdx && d.seat == ctl.seat && DecisionQueue.isTarget(d)) {
+                pending.add(d);
+            }
+        }
+        for (Decision d : pending) {
+            List<String> left = unusedRefs(d);
+            if (left.isEmpty()) {
+                if (d.refs().isEmpty() && min == 0) {
+                    // gorge's explicit empty answer to an "up to" ask.
+                    d.consumed = true;
+                    note("target step " + stepIdx + ": empty answer for " + sa.getHostCard());
+                    return true;
+                }
+                continue;
+            }
+            if (bindRefs(sa, left, max, d) > 0) {
+                return finishTargets(sa);
+            }
+        }
+        // No scripted ref fits this ask.
+        List<GameEntity> cands = sa.getTargetRestrictions() == null ? new ArrayList<>()
+                : sa.getTargetRestrictions().getAllCandidates(sa);
+        if (cands.isEmpty() || max == 0) {
+            note("target step " + stepIdx + ": no candidate for " + sa.getHostCard());
+            return min == 0;
+        }
+        if (min == 0) {
+            // An "up to" slot gorge did not pose: leave it empty.
+            note("target step " + stepIdx + ": up-to slot left empty (gorge posed none) for " + sa.getHostCard());
+            return true;
+        }
+        if (conditional(sa)) {
+            // A sub-ability whose condition (bargained, teamwork, gift, kicked)
+            // gorge settled as false at cast time, so it posed no target ask;
+            // Forge still asks. Any legal pick is inert at resolution: take the
+            // first candidate not already chosen elsewhere in the chain.
+            List<GameObject> taken = chainTargets(sa);
+            for (GameEntity c : sortedCandidates(cands)) {
+                if (!taken.contains(c) && sa.canTarget(c)) {
+                    sa.getTargets().add(c);
+                    note("target step " + stepIdx + ": conditional slot, inert pick " + c);
+                    return finishTargets(sa);
+                }
+            }
+        }
+        for (Decision d : pending) {
+            if (!unusedRefs(d).isEmpty()) {
+                throw new HarnessError("step " + stepIdx + " target " + unusedRefs(d) + " is not a legal target for " + sa);
+            }
+        }
+        miss("target", String.valueOf(sa));
+        return false; // loose: no scripted target; the cast fails visibly
+    }
+
+    /** Binds the refs this ability can target, in order, up to max; marks
+     * them used on the decision (consumed once every ref is used). */
+    private int bindRefs(SpellAbility sa, List<String> refsIn, int max, Decision d) {
+        int got = 0;
+        for (String ref : refsIn) {
             if (sa.getTargets().size() >= max) {
-                note("target " + ref + " beyond max " + max + " at step " + stepIdx);
                 break;
             }
-            GameObject o = targetObject(ref);
-            if (!sa.canTarget(o)) {
-                throw new HarnessError("step " + stepIdx + " target " + ref + " is not a legal target for " + sa);
+            GameObject o;
+            try {
+                o = targetObject(ref);
+            } catch (HarnessError e) {
+                continue;
+            }
+            if (sa.getTargets().contains(o) || !sa.canTarget(o)) {
+                continue;
             }
             sa.getTargets().add(o);
+            got++;
+            if (d != null) {
+                usedRefs.computeIfAbsent(d, k -> new ArrayList<>()).add(ref);
+                if (unusedRefs(d).isEmpty()) {
+                    d.consumed = true;
+                }
+            }
             note("target step " + stepIdx + ": " + ref + " -> " + o);
         }
+        return got;
+    }
+
+    private final Map<Decision, List<String>> usedRefs = new java.util.IdentityHashMap<>();
+
+    private List<String> unusedRefs(Decision d) {
+        List<String> out = new ArrayList<>(d.refs());
+        for (String u : usedRefs.getOrDefault(d, List.of())) {
+            out.remove(u);
+        }
+        return out;
+    }
+
+    /** Divided allocation, then the min-count check. gorge poses the split
+     * as its own choose_n (resume "damage_split") after the target ask: its
+     * picks repeat a target once per point (contract, gorge forge.go). */
+    private boolean finishTargets(SpellAbility sa) {
         if (sa.isDividedAsYouChoose() && !sa.getTargets().isEmpty()) {
             int total = sa.getStillToDivide();
             int n = sa.getTargets().size();
             if (n == 1) {
                 sa.addDividedAllocation(sa.getTargets().get(0), total);
             } else {
-                // gorge's log carries no per-target split (contract question for P1-6).
-                miss("divided", "split of " + total + " among " + n + " targets");
-                for (int k = 0; k < n; k++) {
-                    sa.addDividedAllocation(sa.getTargets().get(k), total / n + (k == 0 ? total % n : 0));
+                Decision split = dq.take(stepIdx, x -> x.resume.equals("damage_split"));
+                Map<GameObject, Integer> amt = new java.util.LinkedHashMap<>();
+                if (split != null) {
+                    List<String> per = split.objectPicks.isEmpty() ? split.pickRefs : split.objectPicks;
+                    for (String ref : per) {
+                        GameObject o;
+                        try {
+                            o = targetObject(ref);
+                        } catch (HarnessError e) {
+                            continue;
+                        }
+                        if (sa.getTargets().contains(o)) {
+                            amt.merge(o, 1, Integer::sum);
+                        }
+                    }
+                }
+                int sum = 0;
+                for (int v : amt.values()) {
+                    sum += v;
+                }
+                if (split == null || sum != total || amt.size() != n) {
+                    miss("divided", "split of " + total + " among " + n + " targets"
+                            + (split == null ? " (no damage_split)" : " (split " + amt.values() + ")"));
+                    amt.clear();
+                    for (int k = 0; k < n; k++) {
+                        amt.put(sa.getTargets().get(k), total / n + (k == 0 ? total % n : 0));
+                    }
+                }
+                for (Map.Entry<GameObject, Integer> e : amt.entrySet()) {
+                    sa.addDividedAllocation(e.getKey(), e.getValue());
                 }
             }
             note("divided step " + stepIdx + ": " + total + " among " + n);
         }
         return sa.getTargets().size() >= sa.getMinTargets();
+    }
+
+    /** The ability (or a parent in its chain) is gated by a Condition param. */
+    static boolean conditional(SpellAbility sa) {
+        for (SpellAbility s = sa; s != null; s = s.getParent()) {
+            for (String k : s.getMapParams().keySet()) {
+                if (k.startsWith("Condition")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static List<GameObject> chainTargets(SpellAbility sa) {
+        List<GameObject> out = new ArrayList<>();
+        SpellAbility root = sa;
+        while (root.getParent() != null) {
+            root = root.getParent();
+        }
+        for (SpellAbility s = root; s != null; s = s.getSubAbility()) {
+            if (s != sa && s.getTargets() != null) {
+                for (GameObject o : s.getTargets()) {
+                    out.add(o);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static List<GameEntity> sortedCandidates(List<GameEntity> cands) {
+        List<GameEntity> out = new ArrayList<>(cands);
+        out.sort((a, b) -> {
+            boolean pa = a instanceof Player;
+            boolean pb = b instanceof Player;
+            if (pa != pb) {
+                return pa ? -1 : 1;
+            }
+            return Integer.compare(a.getId(), b.getId());
+        });
+        return out;
     }
 
     /** A target ref's object: a player, a permanent or card, or the spell a
