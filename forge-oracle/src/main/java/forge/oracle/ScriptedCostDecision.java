@@ -87,7 +87,13 @@ public class ScriptedCostDecision extends AiCostDecision {
         int n = cost.getAbilityAmount(ability);
         CardCollectionView list = CardLists.filter(valid(ZoneType.Battlefield, cost.getType().replace("+withTotalPowerGE", "")), CardPredicates.UNTAPPED);
         if (cost.getType().contains("+withTotalPowerGE")) {
-            return choice(cost, super.visit(cost));
+            // Crew / saddle / teamwork: any number with enough total power;
+            // gorge logs the tapped creatures as one tapcost pick.
+            List<Card> picked = m.pickObjects(seat, list, 1, list.size(), "cost CostTapType (total power)");
+            if (picked != null) {
+                return PaymentDecision.card(picked);
+            }
+            return m.strict() ? null : super.visit(cost);
         }
         return cards(cost, list, n, m.strict() ? null : super.visit(cost));
     }
