@@ -111,6 +111,7 @@ final class SetupBuilder {
             Card c = create(m, n, p);
             m.refs.bind(i, n, c.getId());
             putOntoBattlefield(m.game, p, c);
+            unlockNamedDoor(m.game, p, c, n);
             if (containsName(backFace, n)) {
                 flipToBack(c, n);
             }
@@ -201,6 +202,29 @@ final class SetupBuilder {
         } finally {
             if (saga) {
                 game.getTriggerHandler().clearSuppression(TriggerType.CounterAdded);
+            }
+        }
+    }
+
+    /** A Room named by one door's name stands with that door unlocked, as
+     * gorge's setup places it (name and colour of the door). The unlock
+     * triggers are held off: setup fires no entry-like triggers. */
+    static void unlockNamedDoor(Game game, Player p, Card c, String name) {
+        if (!c.getType().hasSubtype("Room")) {
+            return;
+        }
+        for (CardStateName sn : new CardStateName[] {CardStateName.LeftSplit, CardStateName.RightSplit}) {
+            if (c.hasState(sn) && name.equalsIgnoreCase(c.getState(sn).getName())) {
+                TriggerHandler th = game.getTriggerHandler();
+                th.suppressMode(TriggerType.UnlockDoor);
+                th.suppressMode(TriggerType.FullyUnlock);
+                try {
+                    c.unlockRoom(p, sn);
+                } finally {
+                    th.clearSuppression(TriggerType.UnlockDoor);
+                    th.clearSuppression(TriggerType.FullyUnlock);
+                }
+                return;
             }
         }
     }
