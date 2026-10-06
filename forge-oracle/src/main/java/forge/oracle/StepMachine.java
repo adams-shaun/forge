@@ -1198,6 +1198,20 @@ public final class StepMachine {
         return null;
     }
 
+    /** Forge's "Cancel search?" after each searched card: true while gorge's
+     * one pick still has refs to give, false once it is used up; null when no
+     * gorge search pick is in flight at this step. */
+    Boolean searchWantsMore(int seat) {
+        if (carryStep != stepIdx || carrySeat != seat) {
+            return null;
+        }
+        boolean more = !carryRefs.isEmpty();
+        if (!more) {
+            carryOpen = false;
+        }
+        return more;
+    }
+
     private int carryStep = -99;
     private int carrySeat = -1;
     private List<String> carryRefs = new ArrayList<>();
@@ -1238,9 +1252,94 @@ public final class StepMachine {
         return null;
     }
 
+    /** gorge's trigger_order ("order" kind, pick kinds "trigger"): picks[0]
+     * is put on the stack FIRST and resolves LAST (decision.KTriggerOrder).
+     * Forge's list is resolution order (orderAndPlaySimultaneousSa plays it
+     * from the end), so the matched list is reversed. Labels are "Host: text"
+     * and bind to Forge's triggers by normalized text prefix. */
     List<SpellAbility> orderTriggers(int seat, List<SpellAbility> sas) {
+        Decision d = take(seat, x -> x.kind.equals("order") && !x.pickKinds.isEmpty() && x.pickKinds.get(0).equals("trigger")
+                && x.picks.size() == sas.size());
+        if (d != null) {
+            List<SpellAbility> left = new ArrayList<>(sas);
+            List<SpellAbility> placed = new ArrayList<>();
+            for (String label : d.picks) {
+                SpellAbility best = null;
+                int bestScore = -1;
+                boolean tie = false;
+                for (SpellAbility sa : left) {
+                    int sc = triggerScore(label, sa);
+                    if (sc > bestScore) {
+                        best = sa;
+                        bestScore = sc;
+                        tie = false;
+                    } else if (sc == bestScore) {
+                        tie = true;
+                    }
+                }
+                if (best == null || bestScore < 4 || (tie && !sameEffect(left))) {
+                    miss("trigger order", "gorge trigger \"" + label + "\" binds no unique Forge trigger");
+                    return null;
+                }
+                left.remove(best);
+                placed.add(best);
+            }
+            java.util.Collections.reverse(placed);
+            note("trigger order step " + stepIdx + ": " + d.picks.size() + " bound");
+            return placed;
+        }
+        if (sameEffect(sas)) {
+            return sas; // copies of one trigger: the order is unobservable
+        }
         miss("trigger order", sas.size() + " simultaneous triggers");
         return null;
+    }
+
+    private static boolean sameEffect(List<SpellAbility> sas) {
+        java.util.Set<String> ds = new java.util.HashSet<>();
+        for (SpellAbility sa : sas) {
+            ds.add(sa.getHostCard().getName() + "|" + norm(String.valueOf(sa.getTrigger() != null ? sa.getTrigger() : sa), sa.getHostCard().getName()));
+        }
+        return ds.size() <= 1;
+    }
+
+    static String norm(String s, String host) {
+        String t = s;
+        if (host != null && !host.isEmpty()) {
+            t = t.replace(host, "cardname");
+        }
+        return t.toLowerCase(java.util.Locale.ROOT).replace("cardname", "~").replaceAll("[^a-z0-9~]", "");
+    }
+
+    private static int triggerScore(String label, SpellAbility sa) {
+        String host = sa.getHostCard().getName();
+        String text = label;
+        if (text.startsWith(host + ": ")) {
+            text = text.substring(host.length() + 2);
+        }
+        String want = norm(text, host);
+        int best = 0;
+        List<String> cands = new ArrayList<>();
+        if (sa.getTrigger() != null) {
+            cands.add(sa.getTrigger().toString());
+            if (sa.getTrigger().getKeyword() != null) {
+                cands.add(sa.getTrigger().getKeyword().getKeyword().toString());
+            }
+        }
+        cands.add(sa.toString());
+        cands.add(sa.getDescription());
+        for (String c : cands) {
+            if (c == null) {
+                continue;
+            }
+            String h = norm(c.startsWith(host + " - ") ? c.substring(host.length() + 3) : c, host);
+            int k = 0;
+            while (k < want.length() && k < h.length() && want.charAt(k) == h.charAt(k)) {
+                k++;
+            }
+            best = Math.max(best, k);
+        }
+        return best;
     }
 
     /** A colour pick by name ("White"); null when gorge logged none. */
@@ -1263,6 +1362,10 @@ public final class StepMachine {
      * a single coloured symbol, else 0 (colourless or several symbols). */
     static byte manaColor(String label) {
         String t = label.trim();
+        int colon = t.lastIndexOf(": Add ");
+        if (colon >= 0) {
+            t = t.substring(colon + 2); // "Pay 1: Add W" (filter-land stage label)
+        }
         if (!t.startsWith("Add ")) {
             return 0;
         }
