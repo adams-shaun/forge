@@ -569,16 +569,16 @@ public class ScriptedController extends PlayerControllerAi {
         return attackers.size() <= 1 ? attackers : missThen("attacker order", () -> super.orderAttackers(blocker, attackers));
     }
 
-    // ---- combat (phase 2 routes these; phase 1 never attacks) --------------
+    // ---- combat: the attack / block steps and pass_to decision stops ---------
 
     @Override
     public void declareAttackers(Player attacker, Combat combat) {
-        // No attacks: gorge's level-A drive never attacks, and the attack op is P2-3.
+        m.declareAttackers(attacker, combat);
     }
 
     @Override
     public void declareBlockers(Player defender, Combat combat) {
-        // No blocks, as for attacks.
+        m.declareBlockers(defender, combat);
     }
 
     @Override
