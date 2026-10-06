@@ -450,6 +450,11 @@ public final class StepMachine {
             want = new ArrayList<>(stepTargets);
             stepTargets.clear();
             note("targets from the step at step " + stepIdx + ": " + want);
+        } else if (sa.getTargetRestrictions() == null || !sa.getTargetRestrictions().hasCandidates(sa)) {
+            // Nothing to target: gorge poses no decision either (an "up to"
+            // slot stays empty; a mandatory one leaves the trigger off the stack).
+            note("target step " + stepIdx + ": no candidate for " + sa.getHostCard());
+            return sa.getMinTargets() == 0;
         } else {
             miss("target", String.valueOf(sa));
             return false; // loose: no scripted target; the cast fails visibly
@@ -596,7 +601,7 @@ public final class StepMachine {
     <T extends GameEntity> List<T> pickObjects(int seat, Iterable<T> options, int min, int max, String what) {
         List<T> opts = new ArrayList<>();
         options.forEach(opts::add);
-        Decision d = take(seat, DecisionQueue::isObjectChoice);
+        Decision d = take(seat, x -> DecisionQueue.isObjectChoice(x) || DecisionQueue.isEmptyChoice(x));
         if (d != null) {
             List<T> out = new ArrayList<>();
             Set<T> used = new HashSet<>();
@@ -619,8 +624,8 @@ public final class StepMachine {
         if (opts.isEmpty()) {
             return new ArrayList<>();
         }
-        if (min == max && opts.size() == min) {
-            return opts; // forced: every option is required
+        if (opts.size() <= min) {
+            return opts; // forced: every option is required (and there are no more)
         }
         miss(what, opts.size() + " options, " + min + ".." + max + " to pick");
         return null;
@@ -666,6 +671,81 @@ public final class StepMachine {
         return null;
     }
 
+    /** A colour pick by name ("White"); null when gorge logged none. */
+    Byte chooseColor(int seat, forge.card.ColorSet options) {
+        Decision d = take(seat, x -> x.kind.equals("choose_n") && x.pickKinds.contains("color") && x.picks.size() == 1);
+        if (d == null) {
+            return null;
+        }
+        byte b = forge.card.MagicColor.fromName(d.picks.get(0));
+        if (b == 0 || (options != null && !options.hasAnyColor(b))) {
+            miss("colour", "gorge colour " + d.picks.get(0) + " is not offered");
+            return null;
+        }
+        note("colour step " + stepIdx + ": " + d.picks.get(0));
+        return b;
+    }
+
+    /** A card-name pick ("name" kind). */
+    String chooseName(int seat) {
+        Decision d = take(seat, x -> x.kind.equals("choose_n") && x.pickKinds.contains("name") && x.picks.size() == 1);
+        if (d == null) {
+            return null;
+        }
+        note("name step " + stepIdx + ": " + d.picks.get(0));
+        return d.picks.get(0);
+    }
+
+    /** Scry/surveil: gorge's "arrange" is the ordered-subset ask (Ruling J0):
+     * the picked cards stay on top, in pick order, and every card not picked
+     * goes away (to the bottom for scry, the graveyard for surveil). The pick
+     * kinds name the away destination; they are the same for every option.
+     * Measured on Diresight/Lightshell Duo (surveil 2, both picked, gorge's
+     * graveyard stays empty). Returns {top, away}, or null when gorge logged
+     * no arrangement. */
+    List<List<Card>> arrange(int seat, List<Card> cards) {
+        Decision d = take(seat, x -> x.kind.equals("order") && x.gorgeKind.equals("arrange"));
+        if (d == null) {
+            return null;
+        }
+        List<Card> rest = new ArrayList<>(cards);
+        List<Card> top = new ArrayList<>();
+        List<String> refs = d.refs();
+        for (int i = 0; i < d.picks.size(); i++) {
+            Card hit = null;
+            for (Card c : rest) {
+                if (SnapshotWriter.zoneName(c).equals(d.picks.get(i))
+                        || (i < refs.size() && SnapshotWriter.zoneName(c).equals(RefTable.parse(refs.get(i)).name))) {
+                    hit = c;
+                    break;
+                }
+            }
+            if (hit == null) {
+                miss("arrange", "gorge card " + d.picks.get(i) + " is not among the cards looked at");
+                return null;
+            }
+            rest.remove(hit);
+            top.add(hit);
+        }
+        note("arrange step " + stepIdx + ": top " + top.size() + ", away " + rest.size());
+        return List.of(top, rest);
+    }
+
+    /** A clone-style "may enter as a copy" replacement: gorge's clone pick is
+     * the copied object, or "Enter as itself". The copied object's own pick is
+     * left for the choice that follows. */
+    Boolean cloneReplacement(int seat) {
+        Decision d = dq.peek(stepIdx, x -> x.seat == seat && x.pickKinds.contains("clone"));
+        if (d == null) {
+            return null;
+        }
+        if (!d.picks.isEmpty() && d.picks.get(0).equalsIgnoreCase("Enter as itself")) {
+            d.consumed = true;
+            return false;
+        }
+        return true;
+    }
+
     String chooseLabel(int seat, Collection<String> options, String what) {
         Decision d = take(seat, x -> x.kind.equals("choose_n") && x.picks.size() == 1 && containsIgnoreCase(options, x.picks.get(0)));
         if (d == null) {
@@ -681,7 +761,7 @@ public final class StepMachine {
     }
 
     Integer chooseNumber(int seat, int min, int max) {
-        Decision d = take(seat, x -> x.kind.equals("choose_n") && x.picks.size() == 1 && number(x.picks.get(0)) != null);
+        Decision d = take(seat, x -> x.kind.equals("choose_n") && x.picks.size() == 1 && !DecisionQueue.isX(x) && number(x.picks.get(0)) != null);
         if (d == null) {
             return null;
         }
