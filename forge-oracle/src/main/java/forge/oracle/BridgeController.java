@@ -377,6 +377,24 @@ public final class BridgeController extends PlayerControllerAi {
         o.addProperty("counter", api == ApiType.Counter);
         o.addProperty("draw", api == ApiType.Draw);
         o.addProperty("token", api == ApiType.Token);
+        // The AI hints botpolicy's A3/A5 rules read, as runtime values (no
+        // script text): the PlayMain1 SVar raw (the Go side canonicalises it
+        // with gorge's own reader), any RemoveDeck hint, and the
+        // AttachAILogic SVar of an Aura spell aimed at a creature.
+        String pm1 = c.hasSVar("PlayMain1") ? c.getSVar("PlayMain1") : "";
+        if (!pm1.isEmpty()) {
+            o.addProperty("play_main1", pm1);
+        }
+        boolean remove = forge.ai.ComputerUtilCard.isCardRemAIDeck(c)
+                || forge.ai.ComputerUtilCard.isCardRemRandomDeck(c)
+                || forge.ai.ComputerUtilCard.isCardRemNonCommanderDeck(c);
+        o.addProperty("remove_deck", remove);
+        if (api == ApiType.Attach && c.hasSVar("AttachAILogic")) {
+            String valid = first.hasParam("ValidTgts") ? first.getParam("ValidTgts") : "";
+            if (valid.startsWith("Creature")) {
+                o.addProperty("aura_logic", c.getSVar("AttachAILogic"));
+            }
+        }
         // The raw Produced$/Amount$ of every mana ability; the Go side folds
         // them with gorge's own cards.ProducedCounts, so the production a
         // policy reads is gorge's parse, not a second one.
