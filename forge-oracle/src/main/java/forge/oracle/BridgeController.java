@@ -83,6 +83,26 @@ public final class BridgeController extends PlayerControllerAi {
         fallbacks.merge(what, 1, Integer::sum);
     }
 
+    private final Map<String, Integer> asksByKind = new LinkedHashMap<>();
+    private long optionsTotal;
+    private int optionsMax;
+
+    /** Asks answered by the bridge, by kind, with the offered option counts. */
+    public JsonObject askStats() {
+        JsonObject o = new JsonObject();
+        JsonObject by = new JsonObject();
+        int n = 0;
+        for (var e : asksByKind.entrySet()) {
+            by.addProperty(e.getKey(), e.getValue());
+            n += e.getValue();
+        }
+        o.addProperty("asks", n);
+        o.add("by_kind", by);
+        o.addProperty("options_total", optionsTotal);
+        o.addProperty("options_max", optionsMax);
+        return o;
+    }
+
     /** One ask, one answer. A refused or broken ask is a hard failure of the
      * bridged seat: falling back silently would report a match we did not
      * play. */
@@ -90,6 +110,10 @@ public final class BridgeController extends PlayerControllerAi {
         if (broken) {
             throw new IllegalStateException("bridge is broken; the match cannot continue");
         }
+        asksByKind.merge(req.get("kind").getAsString(), 1, Integer::sum);
+        int nOpts = req.getAsJsonArray("options").size();
+        optionsTotal += nOpts;
+        optionsMax = Math.max(optionsMax, nOpts);
         try {
             to.write(GSON.toJson(req));
             to.write("\n");
@@ -885,8 +909,13 @@ public final class BridgeController extends PlayerControllerAi {
     }
 
     /** Starts the bridge process. The caller owns it and must close it. */
-    public static Process start(String binary, long seed) throws IOException {
-        ProcessBuilder pb = new ProcessBuilder(binary, "-seed", Long.toString(seed));
+    public static Process start(String binary, List<String> args, long seed) throws IOException {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(binary);
+        cmd.addAll(args);
+        cmd.add("-seed");
+        cmd.add(Long.toString(seed));
+        ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(false);
         pb.redirectError(ProcessBuilder.Redirect.INHERIT);
         return pb.start();

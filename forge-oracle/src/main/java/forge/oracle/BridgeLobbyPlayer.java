@@ -16,15 +16,17 @@ import forge.game.player.PlayerController;
  */
 public final class BridgeLobbyPlayer extends LobbyPlayerAi {
     private final String binary;
+    private final java.util.List<String> args;
     private final long seed;
     private final int seat;
     private Process bridge;
     private BridgeController controller;
 
-    public BridgeLobbyPlayer(String name, int seat, String binary, long seed) {
+    public BridgeLobbyPlayer(String name, int seat, String binary, java.util.List<String> args, long seed) {
         super(name, null);
         this.seat = seat;
         this.binary = binary;
+        this.args = args;
         this.seed = seed;
     }
 
@@ -36,7 +38,7 @@ public final class BridgeLobbyPlayer extends LobbyPlayerAi {
     private PlayerController make(Game game, Player p) {
         try {
             if (bridge == null) {
-                bridge = BridgeController.start(binary, seed);
+                bridge = BridgeController.start(binary, args, seed);
             }
             controller = new BridgeController(game, p, this, seat, bridge);
             return controller;

@@ -98,7 +98,7 @@ public final class GameReplay {
                 // Each bridged seat gets its own rng stream, derived from the
                 // game seed and the seat index exactly as bench derives a
                 // seat's policy seed, so a match is reproducible.
-                BridgeLobbyPlayer b = new BridgeLobbyPlayer(s.name, i, s.bridge, req.seed ^ (i + 1));
+                BridgeLobbyPlayer b = new BridgeLobbyPlayer(s.name, i, s.bridge, s.bridgeArgs, req.seed ^ (i + 1));
                 bridges.add(b);
                 bridgeSeats.add(i);
                 lobby = b;
@@ -186,6 +186,19 @@ public final class GameReplay {
             bridgeFallbacks.add(fo);
         }
         row.add("bridge_fallbacks", bridgeFallbacks);
+        // How much of the match the bridge answered: asks per kind and the
+        // option counts. Diagnostics only; not part of game_sha.
+        JsonArray bridgeAsks = new JsonArray();
+        for (int bi = 0; bi < bridges.size(); bi++) {
+            BridgeLobbyPlayer b = bridges.get(bi);
+            if (b.controller() == null) {
+                continue;
+            }
+            JsonObject ao = b.controller().askStats();
+            ao.addProperty("seat", bridgeSeats.get(bi));
+            bridgeAsks.add(ao);
+        }
+        row.add("bridge_asks", bridgeAsks);
         row.addProperty("ms", (System.nanoTime() - start) / 1_000_000);
         row.addProperty("game_sha", gameSha(row));
         return row;
