@@ -124,6 +124,15 @@ public final class GameReplay {
             }
         }
 
+        if (System.getenv("BRIDGE_GAMELOG") != null) {
+            // Forge's own game log, oldest first, for diagnosing a bridged
+            // game (env-gated; never part of a row).
+            var entries = new ArrayList<>(game.getGameLog().getLogEntries(null));
+            java.util.Collections.reverse(entries);
+            for (var e : entries) {
+                System.err.println("GAMELOG " + e.type() + " " + e.message());
+            }
+        }
         JsonObject row = new JsonObject();
         row.addProperty("engine", ResultRow.ENGINE);
         row.addProperty("forge_ref", forgeRef);
