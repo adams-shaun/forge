@@ -302,8 +302,12 @@ public final class BridgeController extends PlayerControllerAi {
         // so asking the bridge about it would never pose a choice.
         List<SpellAbility> all = offer();
         if (all.isEmpty()) {
-            // Forge's "pass": an empty list is how a controller declines.
-            return new ArrayList<>();
+            // Forge's "pass" is NULL (PhaseHandler: "chosenSa == null ...
+            // that means 'I pass'"). An empty list is "I played nothing, ask
+            // me again": the priority loop re-asks up to 999 times, stashing
+            // the game state each round, before it gives up with "AI looped
+            // too much". That loop was the ~30 s per game.
+            return null;
         }
         JsonArray opts = new JsonArray();
         for (int i = 0; i < all.size(); i++) {
@@ -325,7 +329,7 @@ public final class BridgeController extends PlayerControllerAi {
             }
             opts.add(o);
         }
-        // Forge's controller declines by returning an empty list; gorge's
+        // Forge's controller declines by returning null; gorge's
         // priority decision always offers a "pass" option and answers with an
         // index. Model the decline as a trailing pass option so the policy is
         // asked a question in its own vocabulary, then translate the answer.
@@ -342,7 +346,7 @@ public final class BridgeController extends PlayerControllerAi {
                     + opts.size() + ")");
         }
         if (pick.get(0) == passIndex) {
-            return new ArrayList<>(); // Forge's decline
+            return null; // Forge's pass (see above)
         }
         return List.of(all.get(pick.get(0)));
     }
