@@ -486,6 +486,11 @@ public final class BridgeController extends PlayerControllerAi {
         // chooseSpellAbilityToPlay returns at most one ability (its answer),
         // so asking the bridge about it would never pose a choice.
         List<SpellAbility> all = offer();
+        if (System.getenv("BRIDGE_TRACE") != null) {
+            var ph = getGame().getPhaseHandler();
+            System.err.println("BRIDGE prio turn=" + ph.getTurn() + " active=" + seatOf(ph.getPlayerTurn())
+                    + " phase=" + ph.getPhase() + " stack=" + getGame().getStack().size() + " offer=" + all.size());
+        }
         if (all.isEmpty()) {
             // Forge's "pass" is NULL (PhaseHandler: "chosenSa == null ...
             // that means 'I pass'"). An empty list is "I played nothing, ask
