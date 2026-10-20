@@ -1802,7 +1802,54 @@ public final class BridgeController extends PlayerControllerAi {
 
     @Override
     public boolean confirmTrigger(forge.game.trigger.WrappedAbility wrapper) {
-        return fb("confirmTrigger", () -> super.confirmTrigger(wrapper));
+        if (fbDepth > 0 || brDepth > 0) {
+            return fb("confirmTrigger", () -> super.confirmTrigger(wrapper));
+        }
+        if (wrapper.isMandatory()) {
+            // Not a choice: gorge never asks about a mandatory trigger, and
+            // the AI parent answers true here without deciding anything.
+            coverage("confirmTrigger")[3]++;
+            return true;
+        }
+        return br("confirmTrigger", () -> askTriggerOptional(wrapper));
+    }
+
+    /** gorge's KTriggerOptional: "yes" then "no" on the trigger's source.
+     * effect_optional marks the api:Effect Triggers$ body (the trigger's
+     * host is an Effect card), which gorge's bots decline. */
+    private boolean askTriggerOptional(forge.game.trigger.WrappedAbility wrapper) {
+        Card host = wrapper.getHostCard();
+        Player ctl = wrapper.getActivatingPlayer() != null ? wrapper.getActivatingPlayer() : player;
+        JsonArray opts = new JsonArray();
+        String[] kinds = {"yes", "no"};
+        for (int i = 0; i < 2; i++) {
+            JsonObject o = new JsonObject();
+            o.addProperty("index", i);
+            o.addProperty("kind", kinds[i]);
+            o.addProperty("label", i == 0 ? "Yes \u2014 " + (host == null ? "?" : host.getName()) : "No");
+            if (host != null) {
+                o.addProperty("obj", host.getId());
+            }
+            o.addProperty("player", seatOf(ctl));
+            opts.add(o);
+        }
+        JsonObject req = new JsonObject();
+        req.addProperty("v", WIRE_VERSION);
+        req.addProperty("kind", "trigger_optional");
+        req.addProperty("seat", seat);
+        req.add("board", board(player));
+        req.add("options", opts);
+        if (host != null) {
+            req.addProperty("source", host.getId());
+            if (host.isImmutable()) {
+                req.addProperty("effect_optional", true);
+            }
+        }
+        List<Integer> pick = choices(ask(req));
+        if (pick.size() != 1 || (pick.get(0) != 0 && pick.get(0) != 1)) {
+            throw new IllegalStateException("bridge trigger_optional answer " + pick + " is not yes or no");
+        }
+        return pick.get(0) == 0;
     }
 
     @Override
