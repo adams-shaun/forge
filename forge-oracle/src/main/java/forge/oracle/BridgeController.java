@@ -541,6 +541,15 @@ public final class BridgeController extends PlayerControllerAi {
             return null; // Forge's pass (see above)
         }
         SpellAbility chosen = all.get(pick.get(0));
+        if (chosen.costHasManaX() && chosen.getXManaCostPaid() == null) {
+            // Forge AI picks X inside its own canPlaySa, which the bridge's
+            // pick never runs, so an {X} spell was paid with X = 0 (a
+            // Walking Ballista entered as a 0/0 and died). No X ask exists on
+            // the wire yet: take the largest X Forge can pay, counted as a
+            // fallback.
+            fallback("xValue");
+            chosen.setXManaCostPaid(forge.ai.ComputerUtilMana.determineLeftoverMana(chosen, player, false));
+        }
         if (needsTargets(chosen)) {
             // Forge AI chooses targets inside its own canPlaySa, which the
             // bridge's pick never runs: without this a chosen targeted
