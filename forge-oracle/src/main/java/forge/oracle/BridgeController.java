@@ -753,11 +753,20 @@ public final class BridgeController extends PlayerControllerAi {
         // The controllers this defender must answer for: the player, plus the
         // planeswalkers and battles they protect (each is its own defender in
         // Forge, and each gets its own option), in a stable order.
+        // `attacker` is the ATTACKING player (this seat), not a defender:
+        // building the defender list from it declared every attack at the
+        // bridge's own seat, so each gorge attacker hit gorge. The defenders
+        // are Combat's attackable entities (opponents first, then their
+        // planeswalkers and battles), in Forge's order.
         List<GameEntity> targets = new ArrayList<>();
-        targets.add(attacker);
-        for (Card c : attacker.getCardsIn(ZoneType.Battlefield)) {
-            if (c.isPlaneswalker() || c.isBattle()) {
-                targets.add(c);
+        for (GameEntity e : combat.getDefenders()) {
+            if (e instanceof Player) {
+                targets.add(e);
+            }
+        }
+        for (GameEntity e : combat.getDefenders()) {
+            if (!(e instanceof Player)) {
+                targets.add(e);
             }
         }
         JsonArray opts = new JsonArray();
@@ -770,7 +779,7 @@ public final class BridgeController extends PlayerControllerAi {
                 if (!forge.game.combat.CombatUtil.canAttack(c, target)) {
                     continue;
                 }
-                if (target == attacker) {
+                if (target instanceof Player) {
                     chosen = target; // a player attack is the default
                     break;
                 }
