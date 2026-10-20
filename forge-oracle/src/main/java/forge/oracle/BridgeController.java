@@ -65,8 +65,23 @@ public final class BridgeController extends PlayerControllerAi {
     /** The seat's offer to the bridge: gorge's decision vocabulary. */
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
     /** forgebridge.Version on the Go side: v2 adds the turn/step/stack facts,
-     * per-card tapped/produces/instant facts and the own decklist. */
-    static final int WIRE_VERSION = 2;
+     * per-card tapped/produces/instant facts and the own decklist; v3 adds the
+     * target, mulligan and trigger_optional asks and the facts their gorge
+     * arms read (foreign battlefield cards, colour, type words, the public
+     * colour census). Field map: four-yay
+     * docs/design/2026-10-20-bridge-v3-fieldmap.md. */
+    static final int WIRE_VERSION = 3;
+
+    /** The spell whose targets are being chosen while it is still in its
+     * origin zone (Forge chooses a cast's targets before moving it to the
+     * stack; gorge poses the ask with the spell already ON the stack, CR
+     * 601.2b/c). While set, board() leaves it out of the zone facts and the
+     * hand size and puts it on top of the stack facts. */
+    private Card pendingCast;
+
+    /** True while the pregame mulligan asks are posed: there is no phase yet,
+     * and gorge's mulligan round runs before turn 1 in its untap step. */
+    private boolean pregame;
 
     private final Process proc;
     private final BufferedWriter to;
@@ -215,11 +230,15 @@ public final class BridgeController extends PlayerControllerAi {
         b.addProperty("is_main", ph.getPhase() == PhaseType.MAIN1 || ph.getPhase() == PhaseType.MAIN2);
         b.addProperty("first_main", ph.getPhase() == PhaseType.MAIN1);
         b.addProperty("my_turn", me.equals(ph.getPlayerTurn()));
-        b.addProperty("step", stepName(ph.getPhase()));
+        b.addProperty("step", pregame && ph.getPhase() == null ? "untap" : stepName(ph.getPhase()));
         JsonObject hand = new JsonObject();
         JsonObject library = new JsonObject();
         for (Player p : getGame().getRegisteredPlayers()) {
-            hand.addProperty(Integer.toString(seatOf(p)), p.getCardsIn(ZoneType.Hand).size());
+            int h = p.getCardsIn(ZoneType.Hand).size();
+            if (pendingCast != null && p.equals(me) && pendingCast.isInZone(ZoneType.Hand)) {
+                h--;
+            }
+            hand.addProperty(Integer.toString(seatOf(p)), h);
             library.addProperty(Integer.toString(seatOf(p)), p.getCardsIn(ZoneType.Library).size());
         }
         b.add("hand_size", hand);
@@ -255,13 +274,22 @@ public final class BridgeController extends PlayerControllerAi {
         b.add("creatures", cre);
         JsonArray cards = new JsonArray();
         for (Card c : me.getCardsIn(ZoneType.Hand)) {
+            if (c.equals(pendingCast)) {
+                continue;
+            }
             cards.add(cardFact(c, "hand", true));
         }
         for (Card c : me.getCardsIn(ZoneType.Graveyard)) {
+            if (c.equals(pendingCast)) {
+                continue;
+            }
             // gorge's zone gate: a graveyard card is castable with Flashback.
             cards.add(cardFact(c, "graveyard", c.hasKeyword(Keyword.FLASHBACK)));
         }
         for (Card c : me.getCardsIn(ZoneType.Command)) {
+            if (c.equals(pendingCast)) {
+                continue;
+            }
             cards.add(cardFact(c, "command", true));
         }
         for (Card c : me.getCardsIn(ZoneType.Battlefield)) {
@@ -270,9 +298,25 @@ public final class BridgeController extends PlayerControllerAi {
         // Exile is public; the seat's own exiled cards are what an
         // exile-zone cast (adventure, foretell, plot, impulse draw) names.
         for (Card c : me.getCardsIn(ZoneType.Exile)) {
+            if (c.equals(pendingCast)) {
+                continue;
+            }
             cards.add(cardFact(c, "exile", false));
         }
+        // v3: every other seat's battlefield permanents are public (CR
+        // 400.2); gorge's adapter fills their worth facts for the A2 target
+        // rules and the card-worth readers, with the seat-relative facts
+        // left zero (the Go side enforces that from "controller").
+        for (Player p : getGame().getRegisteredPlayers()) {
+            if (p.equals(me)) {
+                continue;
+            }
+            for (Card c : p.getCardsIn(ZoneType.Battlefield)) {
+                cards.add(foreignFact(c));
+            }
+        }
         b.add("cards", cards);
+        b.add("public_cards", publicCards());
         JsonArray pool = new JsonArray();
         // gorge's pool is a fixed typed array; the bridge reports the plain
         // WUBRG+C counts, which is all the tap/priority gate reads.
@@ -319,6 +363,19 @@ public final class BridgeController extends PlayerControllerAi {
      * cost. */
     private JsonArray stack() {
         JsonArray out = new JsonArray();
+        if (pendingCast != null) {
+            // The spell whose targets are being chosen, where gorge has it:
+            // on top of the stack, not yet paid.
+            JsonObject e = new JsonObject();
+            e.addProperty("id", pendingCast.getId());
+            e.addProperty("controller", seat);
+            e.addProperty("is_spell", true);
+            e.addProperty("is_creature_spell", pendingCast.isCreature());
+            e.addProperty("cmc", pendingCast.getCMC());
+            e.addProperty("mana_cost", pendingCast.getManaCost() == null ? "" : pendingCast.getManaCost().toString());
+            e.addProperty("name", pendingCast.getName());
+            out.add(e);
+        }
         for (SpellAbilityStackInstance si : getGame().getStack()) {
             Card src = si.getSourceCard();
             JsonObject e = new JsonObject();
@@ -397,6 +454,8 @@ public final class BridgeController extends PlayerControllerAi {
         o.addProperty("toughness", c.isCreature() ? c.getNetToughness() : 0);
         o.addProperty("land", c.isLand());
         o.addProperty("tapped", c.isTapped());
+        o.addProperty("colour", gorgeColour(c));
+        o.add("types", typeWords(c));
         if ("battlefield".equals(zone)) {
             o.addProperty("sick", c.isSick());
             Card att = c.getAttachedTo();
@@ -456,6 +515,173 @@ public final class BridgeController extends PlayerControllerAi {
             o.addProperty("activated", n);
         }
         return o;
+    }
+
+    /** Another seat's battlefield permanent: the worth facts gorge's view
+     * adapter fills for it (name, creature/P/T, CMC, basic, land, colour,
+     * type words, mana cost, activations, AI hints). A face-down permanent
+     * keeps only its public face-down characteristics. */
+    private JsonObject foreignFact(Card c) {
+        JsonObject o = new JsonObject();
+        o.addProperty("id", c.getId());
+        o.addProperty("zone", "battlefield");
+        o.addProperty("controller", seatOf(c.getController()));
+        o.addProperty("creature", c.isCreature());
+        o.addProperty("power", c.isCreature() ? c.getNetPower() : 0);
+        o.addProperty("toughness", c.isCreature() ? c.getNetToughness() : 0);
+        if (c.isFaceDown()) {
+            o.addProperty("name", "");
+            return o;
+        }
+        o.addProperty("name", c.getName());
+        o.addProperty("cmc", c.getCMC());
+        o.addProperty("basic", c.isBasicLand());
+        o.addProperty("land", c.isLand());
+        o.addProperty("mana_cost", c.getManaCost() == null ? "" : c.getManaCost().toString());
+        o.addProperty("colour", gorgeColour(c));
+        o.add("types", typeWords(c));
+        int n = 0;
+        for (SpellAbility sa : c.getSpellAbilities()) {
+            if (sa.isActivatedAbility() && !sa.isManaAbility()) {
+                n += sa.getActivationsThisTurn();
+            }
+        }
+        o.addProperty("activated", n);
+        String pm1 = c.hasSVar("PlayMain1") ? c.getSVar("PlayMain1") : "";
+        if (!pm1.isEmpty()) {
+            o.addProperty("play_main1", pm1);
+        }
+        return o;
+    }
+
+    /** The public-card colour census botpolicy's A2 fold reads: every
+     * player's battlefield, graveyard and exile, then the stack's spells. A
+     * face-down card carries its controller and a zero colour. */
+    private JsonArray publicCards() {
+        JsonArray out = new JsonArray();
+        for (Player p : getGame().getRegisteredPlayers()) {
+            for (ZoneType z : new ZoneType[] {ZoneType.Battlefield, ZoneType.Graveyard, ZoneType.Exile}) {
+                for (Card c : p.getCardsIn(z)) {
+                    if (c.equals(pendingCast)) {
+                        continue;
+                    }
+                    out.add(publicCard(c, c.getController()));
+                }
+            }
+        }
+        if (pendingCast != null) {
+            out.add(publicCard(pendingCast, player));
+        }
+        for (SpellAbilityStackInstance si : getGame().getStack()) {
+            Card src = si.getSourceCard();
+            if (!si.isSpell() || src == null) {
+                continue;
+            }
+            out.add(publicCard(src, si.getActivatingPlayer()));
+        }
+        return out;
+    }
+
+    private JsonObject publicCard(Card c, Player controller) {
+        JsonObject o = new JsonObject();
+        o.addProperty("id", c.getId());
+        o.addProperty("controller", seatOf(controller));
+        if (c.isFaceDown()) {
+            o.addProperty("face_down", true);
+        } else {
+            o.addProperty("colour", gorgeColour(c));
+        }
+        return o;
+    }
+
+    /** gorge's colour identity (engine/cards face.go deriveColourIdentity)
+     * applied to the card's current Forge face: the mana cost, the colour
+     * indicator, brace mana symbols in the Oracle text outside every
+     * parenthesis, and a characteristic-defining SetColor$. Forge's own
+     * getColorIdentity() also counts a reminder-only Oracle text (a basic
+     * land's), which gorge does not, so it is not used. A face without
+     * rules (some tokens) falls back to its current colour. */
+    static int gorgeColour(Card c) {
+        forge.card.CardRules rules = c.getRules();
+        forge.card.ICardFace face = null;
+        if (rules != null) {
+            var st = c.getCurrentStateName();
+            face = (st == forge.card.CardStateName.Original || rules.getOtherPart() == null)
+                    ? rules.getMainPart() : rules.getOtherPart();
+        }
+        if (face == null) {
+            return c.getColor().getColor() & 0x1f;
+        }
+        int m = 0;
+        if (face.getManaCost() != null) {
+            m |= forge.card.ColorSet.fromManaCost(face.getManaCost()).getColor();
+        }
+        if (face.getColor() != null) {
+            m |= face.getColor().getColor();
+        }
+        String text = face.getOracleText() == null ? "" : face.getOracleText();
+        int depth = 0;
+        int start = -1;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (ch == '(') {
+                depth++;
+                start = -1;
+            } else if (ch == ')') {
+                if (depth > 0) {
+                    depth--;
+                }
+            } else if (ch == '{') {
+                if (depth == 0) {
+                    start = i + 1;
+                }
+            } else if (ch == '}') {
+                if (depth == 0 && start >= 0) {
+                    m |= symbolColours(text.substring(start, i));
+                    start = -1;
+                }
+            }
+        }
+        for (String st : face.getStaticAbilities()) {
+            if (st.contains("CharacteristicDefining$ True") && st.contains("SetColor$ All")) {
+                m |= 0x1f;
+            }
+        }
+        return m & 0x1f;
+    }
+
+    /** The colours one brace token names (W/U/B/R/G letters: hybrid and
+     * Phyrexian tokens name every letter they carry). */
+    private static int symbolColours(String tok) {
+        int m = 0;
+        for (int i = 0; i < tok.length(); i++) {
+            switch (Character.toUpperCase(tok.charAt(i))) {
+                case 'W': m |= 1; break;
+                case 'U': m |= 2; break;
+                case 'B': m |= 4; break;
+                case 'R': m |= 8; break;
+                case 'G': m |= 16; break;
+                default: break;
+            }
+        }
+        return m;
+    }
+
+    /** The card's type-line words (supertypes, card types, subtypes), which
+     * the Go side hashes with gorge's botpolicy.TypeSigOf. */
+    static JsonArray typeWords(Card c) {
+        JsonArray out = new JsonArray();
+        var t = c.getType();
+        for (var s : t.getSupertypes()) {
+            out.add(s.name());
+        }
+        for (var s : t.getCoreTypes()) {
+            out.add(s.name());
+        }
+        for (String s : t.getSubtypes()) {
+            out.add(s);
+        }
+        return out;
     }
 
     private JsonObject ask(String kind, Player me, JsonArray options) {
@@ -952,11 +1178,296 @@ public final class BridgeController extends PlayerControllerAi {
 
     @Override
     public boolean chooseTargetsFor(SpellAbility sa) {
-        // Target selection needs Forge's candidate list per target slot; a
-        // miss here is a rules difference, not a strategy one, so the parent
-        // answers and the fallback is counted.
-        fallback("chooseTargetsFor");
-        return fb("chooseTargetsFor", () -> super.chooseTargetsFor(sa));
+        // Reached inside a fallback (the AI parent's own pass) or while the
+        // bridge builds an offer: that is not a decision gorge would be
+        // asked, so the parent answers, counted nested/probe as before.
+        if (fbDepth > 0 || brDepth > 0) {
+            return fb("chooseTargetsFor", () -> super.chooseTargetsFor(sa));
+        }
+        String why = unbridgeableTargets(sa);
+        if (why != null) {
+            fallback("chooseTargetsFor:" + why);
+            return fb("chooseTargetsFor", () -> super.chooseTargetsFor(sa));
+        }
+        return br("chooseTargetsFor", () -> askTargets(sa));
+    }
+
+    /** Why the chain from sa has a target slot the wire cannot express, or
+     * null when every slot can be asked. The named reason is the counted
+     * fallback key. */
+    private String unbridgeableTargets(SpellAbility sa) {
+        for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
+            if (cur.getApi() == ApiType.Charm) {
+                return "charm"; // the modes are Forge's, chosen with the targets
+            }
+            if (!cur.usesTargeting()) {
+                continue;
+            }
+            if (cur.isDividedAsYouChoose()) {
+                return "divided";
+            }
+            if (cur.hasParam("TargetingPlayer")) {
+                return "targetingPlayer";
+            }
+            for (String k : new String[] {"TargetsAtRandom", "RandomNumTargets"}) {
+                if (cur.hasParam(k)) {
+                    return "random";
+                }
+            }
+            for (String k : new String[] {"TargetsWithDifferentControllers", "TargetsForEachPlayer",
+                    "TargetsWithDifferentCMC", "TargetsWithDifferentNames", "TargetsWithEqualToughness",
+                    "TargetsWithoutSameCreatureType", "TargetsWithSameCreatureType", "TargetsWithSameCardType",
+                    "MaxTotalTargetCMC", "MaxTotalTargetPower"}) {
+                if (cur.hasParam(k)) {
+                    return "setConstraint";
+                }
+            }
+        }
+        return null;
+    }
+
+    /** True when some SpellAbility in the chain from sa targets. */
+    private static boolean chainTargets(SpellAbility sa) {
+        for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
+            if (cur.usesTargeting()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** One KTarget ask per target slot of the chain from sa, in chain order,
+     * each answer applied before the next slot's candidates are listed (so
+     * TargetUnique and the parent-target references see it). False when a
+     * mandatory slot has fewer candidates than its minimum, which is what
+     * the AI parent returns there; an answer Forge does not accept is a
+     * hard failure, never a silent default. */
+    private boolean askTargets(SpellAbility sa) {
+        Card host = sa.getHostCard();
+        SpellAbility root = sa.getRootAbility();
+        boolean casting = root.isSpell() && host != null && !host.isInZone(ZoneType.Stack);
+        Card saved = pendingCast;
+        pendingCast = casting ? host : null;
+        try {
+            for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
+                if (!cur.usesTargeting()) {
+                    continue;
+                }
+                cur.resetTargets();
+                if (!askSlot(cur, root, host)) {
+                    return false;
+                }
+            }
+        } finally {
+            pendingCast = saved;
+        }
+        for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
+            if (cur.usesTargeting() && !cur.isTargetNumberValid()) {
+                throw new IllegalStateException("bridge targets for " + label(sa) + " are not a valid target count");
+            }
+        }
+        return true;
+    }
+
+    private record Candidate(String kind, GameObject target, int obj, int seat, String label) {}
+
+    private boolean askSlot(SpellAbility cur, SpellAbility root, Card host) {
+        var tr = cur.getTargetRestrictions();
+        List<Candidate> cands = new ArrayList<>();
+        if (tr.getZone().contains(ZoneType.Stack)) {
+            for (SpellAbilityStackInstance si : getGame().getStack()) {
+                SpellAbility on = si.getSpellAbility();
+                if (!cur.canTargetSpellAbility(on)) {
+                    continue;
+                }
+                Card src = si.getSourceCard();
+                String kind = si.isSpell() ? "spell" : on.isTrigger() ? "trigger" : "ability";
+                cands.add(new Candidate(kind, on, src == null ? 0 : src.getId(), seatOf(si.getActivatingPlayer()),
+                        src == null ? "?" : src.getName()));
+            }
+        }
+        for (GameEntity e : tr.getAllCandidates(cur, false)) {
+            if (e instanceof Player) {
+                Player p = (Player) e;
+                cands.add(new Candidate("player", p, 0, seatOf(p), p.getName()));
+            } else if (e instanceof Card) {
+                Card c = (Card) e;
+                if (c.isInZone(ZoneType.Stack)) {
+                    continue; // a stack target is its spell ability, listed above
+                }
+                boolean bf = c.isInZone(ZoneType.Battlefield);
+                Player who = bf ? c.getController() : c.getOwner();
+                cands.add(new Candidate(bf ? "permanent" : "card", c, c.getId(), seatOf(who), c.getName()));
+            } else {
+                throw new IllegalStateException("target candidate the bridge cannot name: " + e);
+            }
+        }
+        int min = tr.getMinTargets(host, cur);
+        int max = Math.min(tr.getMaxTargets(host, cur), cands.size());
+        if (cands.size() < min) {
+            return false;
+        }
+        if (max <= 0) {
+            return true;
+        }
+        JsonArray opts = new JsonArray();
+        for (int i = 0; i < cands.size(); i++) {
+            Candidate c = cands.get(i);
+            JsonObject o = new JsonObject();
+            o.addProperty("index", i);
+            o.addProperty("kind", c.kind());
+            o.addProperty("label", c.label());
+            if (c.obj() != 0) {
+                o.addProperty("obj", c.obj());
+            }
+            o.addProperty("player", c.seat());
+            opts.add(o);
+        }
+        JsonObject req = new JsonObject();
+        req.addProperty("v", WIRE_VERSION);
+        req.addProperty("kind", "target");
+        req.addProperty("seat", seat);
+        req.add("board", board(player));
+        req.add("options", opts);
+        req.addProperty("min", min);
+        req.addProperty("max", max);
+        req.addProperty("prompt", "Choose a target for " + (host == null ? "?" : host.getName()));
+        // gorge's Source (cast_targets.go): the card for a spell, a trigger
+        // and an Attach ability; 0 for another activated ability.
+        boolean withSource = root.isSpell() || root.isTrigger() || cur.getApi() == ApiType.Attach;
+        if (withSource && host != null) {
+            req.addProperty("source", host.getId());
+        }
+        JsonObject te = targetEffect(cur, host);
+        if (te != null) {
+            req.add("target_effect", te);
+        }
+        if (tr.isSameController()) {
+            req.addProperty("same_controller", true);
+        }
+        List<Integer> pick = choices(ask(req));
+        if (pick.size() < min || pick.size() > max || pick.stream().distinct().count() != pick.size()) {
+            throw new IllegalStateException("bridge target answer " + pick + " is not " + min + ".." + max
+                    + " distinct options of " + cands.size());
+        }
+        for (int i : pick) {
+            if (i < 0 || i >= cands.size()) {
+                throw new IllegalStateException("bridge target answer " + pick + " names no offered option");
+            }
+            GameObject t = cands.get(i).target();
+            boolean ok = t instanceof SpellAbility ? cur.canTargetSpellAbility((SpellAbility) t) : cur.canTarget(t);
+            if (!ok) {
+                throw new IllegalStateException("bridge target " + cands.get(i).label() + " is not legal for "
+                        + (host == null ? "?" : host.getName()));
+            }
+            cur.getTargets().add(t);
+        }
+        return true;
+    }
+
+    /** decision.TargetEffect for the slot's own ability, from its ApiType,
+     * params and the host's SVars (see the v3 field map). */
+    private static JsonObject targetEffect(SpellAbility cur, Card host) {
+        ApiType api = cur.getApi();
+        if (api == null) {
+            return null;
+        }
+        JsonObject te = new JsonObject();
+        te.addProperty("api", api.name());
+        switch (api) {
+            case DealDamage:
+            case DamageAll: {
+                JsonObject dmg = new JsonObject();
+                Integer amt = damageAmount(cur, host);
+                if (amt == null) {
+                    dmg.add("amount", com.google.gson.JsonNull.INSTANCE);
+                } else {
+                    dmg.addProperty("amount", amt);
+                }
+                te.add("damage", dmg);
+                break;
+            }
+            case Destroy:
+            case DestroyAll:
+                te.add("removal", removal("destroy", null));
+                break;
+            case Sacrifice:
+            case SacrificeAll:
+                te.add("removal", removal("sacrifice", null));
+                break;
+            case ChangeZone:
+            case ChangeZoneAll: {
+                String dest = cur.hasParam("Destination") ? cur.getParam("Destination") : "";
+                String kind = switch (dest) {
+                    case "Exile" -> "exile";
+                    case "Hand" -> "bounce";
+                    case "Graveyard" -> "graveyard";
+                    case "Library" -> "library";
+                    case "Command" -> "command";
+                    default -> null;
+                };
+                if (kind != null) {
+                    te.add("removal", removal(kind, dest.toLowerCase()));
+                }
+                break;
+            }
+            case Effect: {
+                JsonArray statics = new JsonArray();
+                if (cur.hasParam("StaticAbilities") && host != null) {
+                    for (String name : cur.getParam("StaticAbilities").split(",")) {
+                        String body = host.hasSVar(name.trim()) ? host.getSVar(name.trim()) : "";
+                        java.util.regex.Matcher mm = java.util.regex.Pattern.compile("Mode\\$\\s*([A-Za-z]+)").matcher(body);
+                        if (mm.find()) {
+                            statics.add(mm.group(1));
+                        }
+                    }
+                }
+                if (statics.size() > 0) {
+                    te.add("statics", statics);
+                }
+                break;
+            }
+            case Attach:
+                if (host != null && host.hasSVar("AttachAILogic")) {
+                    te.addProperty("attach_logic", host.getSVar("AttachAILogic"));
+                }
+                break;
+            default:
+                break;
+        }
+        return te;
+    }
+
+    private static JsonObject removal(String kind, String dest) {
+        JsonObject r = new JsonObject();
+        r.addProperty("kind", kind);
+        if (dest != null) {
+            r.addProperty("destination", dest);
+        }
+        return r;
+    }
+
+    /** The nominal damage at target time: a literal NumDmg$, else Forge's
+     * own evaluation of the expression when it does not read the pending
+     * target (gorge refuses those too); otherwise unknown. */
+    private static Integer damageAmount(SpellAbility cur, Card host) {
+        if (!cur.hasParam("NumDmg")) {
+            return null;
+        }
+        String nd = cur.getParam("NumDmg").trim();
+        if (nd.matches("\\d+")) {
+            return Integer.parseInt(nd);
+        }
+        String body = host != null && host.hasSVar(nd) ? host.getSVar(nd) : nd;
+        if (body.contains("Targeted") || body.contains("Remembered") || body.contains("Imprinted")) {
+            return null;
+        }
+        try {
+            int n = forge.game.ability.AbilityUtils.calculateAmount(host, nd, cur);
+            return n < 0 ? null : n;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     // ---- decision coverage ------------------------------------------------
@@ -1020,6 +1531,22 @@ public final class BridgeController extends PlayerControllerAi {
         }
     }
 
+    /** A parent step that carries out a bridged decision (playing the
+     * trigger or no-stack ability whose targets the bridge chose, which pays
+     * its costs): not a decision of its own, so anything it reaches is
+     * counted nested, never as a separate fallback or probe. */
+    private <R> R inner(java.util.function.Supplier<R> parent) {
+        int saved = brDepth;
+        brDepth = 0;
+        fbDepth++;
+        try {
+            return parent.get();
+        } finally {
+            fbDepth--;
+            brDepth = saved;
+        }
+    }
+
     private <R> R fb(String method, java.util.function.Supplier<R> parent) {
         // probe: reached while the bridge builds its own offer (the D1
         // affordability check runs Forge's cost adjustment in test mode,
@@ -1068,7 +1595,22 @@ public final class BridgeController extends PlayerControllerAi {
 
     @Override
     public void playSpellAbilityNoStack(SpellAbility effectSA, boolean canSetupTargets) {
-        fbv("playSpellAbilityNoStack", () -> super.playSpellAbilityNoStack(effectSA, canSetupTargets));
+        // The parent sets targets with brains.doTrigger, not chooseTargetsFor;
+        // a targeted no-stack ability gets the bridge's slots instead, then
+        // the parent's own playNoStack.
+        if (fbDepth > 0 || brDepth > 0 || !canSetupTargets || !chainTargets(effectSA)
+                || unbridgeableTargets(effectSA) != null) {
+            if (canSetupTargets && fbDepth == 0 && brDepth == 0 && chainTargets(effectSA)) {
+                fallback("playSpellAbilityNoStack:" + unbridgeableTargets(effectSA));
+            }
+            fbv("playSpellAbilityNoStack", () -> super.playSpellAbilityNoStack(effectSA, canSetupTargets));
+            return;
+        }
+        br("playSpellAbilityNoStack", () -> {
+            askTargets(effectSA);
+            inner(() -> forge.ai.ComputerUtil.playNoStack(player, effectSA, getGame(), true));
+            return null;
+        });
     }
 
     @Override
@@ -1078,7 +1620,46 @@ public final class BridgeController extends PlayerControllerAi {
 
     @Override
     public void orderAndPlaySimultaneousSa(List<SpellAbility> activePlayerSAs) {
-        fbv("orderAndPlaySimultaneousSa", () -> super.orderAndPlaySimultaneousSa(activePlayerSAs));
+        // The parent prepares each trigger with brains.doTrigger, which sets
+        // its targets without chooseTargetsFor. A targeted trigger the wire
+        // can express gets the bridge's slots and the parent's own playStack;
+        // every other SpellAbility (untargeted, Charm, copies) goes through
+        // the parent one at a time, in the parent's (Forge's) order.
+        boolean any = false;
+        for (SpellAbility sa : activePlayerSAs) {
+            any |= sa.isTrigger() && !sa.isCopied() && chainTargets(sa) && unbridgeableTargets(sa) == null;
+        }
+        if (fbDepth > 0 || brDepth > 0 || !any) {
+            for (SpellAbility sa : activePlayerSAs) {
+                if (fbDepth == 0 && brDepth == 0 && sa.isTrigger() && !sa.isCopied() && chainTargets(sa)) {
+                    fallback("orderAndPlaySimultaneousSa:" + unbridgeableTargets(sa));
+                }
+            }
+            fbv("orderAndPlaySimultaneousSa", () -> super.orderAndPlaySimultaneousSa(activePlayerSAs));
+            return;
+        }
+        br("orderAndPlaySimultaneousSa", () -> {
+            // The order is Forge's (no trigger_order ask on the wire): a real
+            // fallback when there is more than one to order.
+            List<SpellAbility> ordered = activePlayerSAs.size() > 1
+                    ? handOff(() -> orderSimultaneousSa(activePlayerSAs)) : activePlayerSAs;
+            for (SpellAbility sa : ordered) {
+                if (sa.isTrigger() && !sa.isCopied() && chainTargets(sa) && unbridgeableTargets(sa) == null) {
+                    if (askTargets(sa)) {
+                        inner(() -> forge.ai.ComputerUtil.playStack(sa, player, getGame()));
+                    }
+                } else {
+                    if (sa.isTrigger() && !sa.isCopied() && chainTargets(sa)) {
+                        fallback("orderAndPlaySimultaneousSa:" + unbridgeableTargets(sa));
+                    }
+                    handOff(() -> {
+                        fbv("orderAndPlaySimultaneousSa", () -> super.orderAndPlaySimultaneousSa(List.of(sa)));
+                        return null;
+                    });
+                }
+            }
+            return null;
+        });
     }
 
     @Override
