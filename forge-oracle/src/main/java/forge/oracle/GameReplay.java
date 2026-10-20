@@ -208,6 +208,21 @@ public final class GameReplay {
             bridgeAsks.add(ao);
         }
         row.add("bridge_asks", bridgeAsks);
+        // Every decision Forge posed to each bridged seat, by controller
+        // method: {bridged, fallback[, nested]}. Diagnostics only; not part
+        // of game_sha.
+        JsonArray coverage = new JsonArray();
+        for (int bi = 0; bi < bridges.size(); bi++) {
+            BridgeLobbyPlayer b = bridges.get(bi);
+            if (b.controller() == null) {
+                continue;
+            }
+            JsonObject co = new JsonObject();
+            co.addProperty("seat", bridgeSeats.get(bi));
+            co.add("by_method", b.controller().decisionCoverage());
+            coverage.add(co);
+        }
+        row.add("decision_coverage", coverage);
         row.addProperty("ms", (System.nanoTime() - start) / 1_000_000);
         row.addProperty("game_sha", gameSha(row));
         return row;
