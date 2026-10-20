@@ -29,9 +29,13 @@ import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
 import forge.game.combat.Combat;
 import forge.game.combat.CombatUtil;
+import forge.game.ability.ApiType;
+import forge.game.keyword.Keyword;
 import forge.game.keyword.KeywordInterface;
+import forge.game.phase.PhaseType;
 import forge.game.player.Player;
 import forge.game.spellability.SpellAbility;
+import forge.game.spellability.SpellAbilityStackInstance;
 import forge.game.zone.ZoneType;
 
 /**
@@ -52,6 +56,9 @@ import forge.game.zone.ZoneType;
 public final class BridgeController extends PlayerControllerAi {
     /** The seat's offer to the bridge: gorge's decision vocabulary. */
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    /** forgebridge.Version on the Go side: v2 adds the turn/step/stack facts,
+     * per-card tapped/produces/instant facts and the own decklist. */
+    static final int WIRE_VERSION = 2;
 
     private final Process proc;
     private final BufferedWriter to;
@@ -167,7 +174,25 @@ public final class BridgeController extends PlayerControllerAi {
         checkSeat(me);
         JsonObject b = new JsonObject();
         b.addProperty("me", seat);
-        b.addProperty("is_main", isMainPhase(me));
+        var ph = getGame().getPhaseHandler();
+        // gorge fills IsMain from the step alone (any player's main phase,
+        // botpolicy combat.go's g.Step.IsMain() and the view half's Phase),
+        // and MyTurn separately; the old active-player-only is_main made
+        // every opponent's-main window read as "not main".
+        b.addProperty("is_main", ph.getPhase() == PhaseType.MAIN1 || ph.getPhase() == PhaseType.MAIN2);
+        b.addProperty("first_main", ph.getPhase() == PhaseType.MAIN1);
+        b.addProperty("my_turn", me.equals(ph.getPlayerTurn()));
+        b.addProperty("step", stepName(ph.getPhase()));
+        JsonObject hand = new JsonObject();
+        JsonObject library = new JsonObject();
+        for (Player p : getGame().getRegisteredPlayers()) {
+            hand.addProperty(Integer.toString(seatOf(p)), p.getCardsIn(ZoneType.Hand).size());
+            library.addProperty(Integer.toString(seatOf(p)), p.getCardsIn(ZoneType.Library).size());
+        }
+        b.add("hand_size", hand);
+        b.add("library_size", library);
+        b.add("stack", stack());
+        b.add("own_deck", ownDeck(me));
         JsonObject life = new JsonObject();
         for (Player p : getGame().getRegisteredPlayers()) {
             life.addProperty(Integer.toString(seatOf(p)), p.getLife());
@@ -200,7 +225,8 @@ public final class BridgeController extends PlayerControllerAi {
             cards.add(cardFact(c, "hand", true));
         }
         for (Card c : me.getCardsIn(ZoneType.Graveyard)) {
-            cards.add(cardFact(c, "graveyard", false));
+            // gorge's zone gate: a graveyard card is castable with Flashback.
+            cards.add(cardFact(c, "graveyard", c.hasKeyword(Keyword.FLASHBACK)));
         }
         for (Card c : me.getCardsIn(ZoneType.Command)) {
             cards.add(cardFact(c, "command", true));
@@ -229,13 +255,98 @@ public final class BridgeController extends PlayerControllerAi {
         return b;
     }
 
-    /** Sorcery-speed iff the deciding seat is the active player in a main
-     * phase: the same test gorge's seat adapter reads off the projected View. */
-    private boolean isMainPhase(Player me) {
-        var ph = getGame().getPhaseHandler();
-        return me.equals(ph.getPlayerTurn())
-                && (ph.getPhase() == forge.game.phase.PhaseType.MAIN1
-                    || ph.getPhase() == forge.game.phase.PhaseType.MAIN2);
+    /** gorge's step names (state.Step's String form), the exact strings
+     * the bridge's Go side parses back with state.ParseStep. Forge's
+     * first-strike damage step is gorge's combat-damage step. */
+    static String stepName(PhaseType t) {
+        if (t == null) {
+            throw new IllegalStateException("no current phase");
+        }
+        switch (t) {
+            case UNTAP: return "untap";
+            case UPKEEP: return "upkeep";
+            case DRAW: return "draw";
+            case MAIN1: return "main1";
+            case COMBAT_BEGIN: return "begin-combat";
+            case COMBAT_DECLARE_ATTACKERS: return "declare-attackers";
+            case COMBAT_DECLARE_BLOCKERS: return "declare-blockers";
+            case COMBAT_FIRST_STRIKE_DAMAGE: return "combat-damage";
+            case COMBAT_DAMAGE: return "combat-damage";
+            case COMBAT_END: return "end-combat";
+            case MAIN2: return "main2";
+            case END_OF_TURN: return "end";
+            case CLEANUP: return "cleanup";
+            default: throw new IllegalStateException("no gorge step for Forge phase " + t);
+        }
+    }
+
+    /** The stack, TOP first (Forge's own iteration order: MagicStack pushes
+     * with addFirst). Each entry is public: the source object, its
+     * controller's seat, whether it is a spell, and the spell's printed
+     * cost. */
+    private JsonArray stack() {
+        JsonArray out = new JsonArray();
+        for (SpellAbilityStackInstance si : getGame().getStack()) {
+            Card src = si.getSourceCard();
+            JsonObject e = new JsonObject();
+            e.addProperty("id", src == null ? 0 : src.getId());
+            e.addProperty("controller", seatOf(si.getActivatingPlayer()));
+            boolean spell = si.isSpell();
+            e.addProperty("is_spell", spell);
+            e.addProperty("is_creature_spell", spell && src != null && src.isCreature());
+            if (spell && src != null) {
+                e.addProperty("cmc", src.getCMC());
+                e.addProperty("mana_cost", src.getManaCost() == null ? "" : src.getManaCost().toString());
+            }
+            e.addProperty("name", src == null ? "" : src.getName());
+            out.add(e);
+        }
+        return out;
+    }
+
+    /** The seat's OWN decklist, as gorge's deck.Manifest shape: rows sorted
+     * by name (count, land) and the curve sorted by mana value, every copy at
+     * its front face's mana value. A seat knows its own list; this is what
+     * botpolicy's deck-shape posture (A4) reads. */
+    private static JsonObject ownDeck(Player me) {
+        java.util.TreeMap<String, int[]> rows = new java.util.TreeMap<>();
+        java.util.TreeMap<Integer, Integer> curve = new java.util.TreeMap<>();
+        var reg = me.getRegisteredPlayer();
+        JsonObject d = new JsonObject();
+        if (reg == null || reg.getDeck() == null) {
+            return d;
+        }
+        for (var e : reg.getDeck().getMain()) {
+            forge.item.PaperCard pc = e.getKey();
+            int n = e.getValue();
+            var rules = pc.getRules();
+            boolean land = rules.getType().isLand();
+            int[] r = rows.computeIfAbsent(pc.getName(), k -> new int[2]);
+            r[0] += n;
+            if (land) {
+                r[1] = 1;
+            }
+            int cmc = rules.getManaCost() == null ? 0 : rules.getManaCost().getCMC();
+            curve.merge(cmc, n, Integer::sum);
+        }
+        JsonArray main = new JsonArray();
+        for (var e : rows.entrySet()) {
+            JsonObject r = new JsonObject();
+            r.addProperty("name", e.getKey());
+            r.addProperty("count", e.getValue()[0]);
+            r.addProperty("land", e.getValue()[1] == 1);
+            main.add(r);
+        }
+        JsonArray cv = new JsonArray();
+        for (var e : curve.entrySet()) {
+            JsonObject r = new JsonObject();
+            r.addProperty("cmc", e.getKey());
+            r.addProperty("count", e.getValue());
+            cv.add(r);
+        }
+        d.add("main", main);
+        d.add("curve", cv);
+        return d;
     }
 
     private static JsonObject cardFact(Card c, String zone, boolean castable) {
@@ -250,6 +361,38 @@ public final class BridgeController extends PlayerControllerAi {
         o.addProperty("mana_cost", c.getManaCost() == null ? "" : c.getManaCost().toString());
         o.addProperty("castable", castable);
         o.addProperty("on_battlefield", "battlefield".equals(zone));
+        o.addProperty("toughness", c.isCreature() ? c.getNetToughness() : 0);
+        o.addProperty("land", c.isLand());
+        o.addProperty("tapped", c.isTapped());
+        if ("battlefield".equals(zone)) {
+            o.addProperty("sick", c.isSick());
+            Card att = c.getAttachedTo();
+            if (att != null) {
+                o.addProperty("attached_to", att.getId());
+            }
+        }
+        o.addProperty("instant_speed", c.isInstant() || c.hasKeyword(Keyword.FLASH));
+        SpellAbility first = c.getFirstSpellAbility();
+        ApiType api = first == null ? null : first.getApi();
+        o.addProperty("counter", api == ApiType.Counter);
+        o.addProperty("draw", api == ApiType.Draw);
+        o.addProperty("token", api == ApiType.Token);
+        // The raw Produced$/Amount$ of every mana ability; the Go side folds
+        // them with gorge's own cards.ProducedCounts, so the production a
+        // policy reads is gorge's parse, not a second one.
+        JsonArray prod = new JsonArray();
+        for (SpellAbility ma : c.getManaAbilities()) {
+            if (ma.getManaPart() == null) {
+                continue;
+            }
+            JsonObject m = new JsonObject();
+            m.addProperty("produced", ma.getManaPart().getOrigProduced());
+            m.addProperty("amount", ma.hasParam("Amount") ? ma.getParam("Amount") : "");
+            prod.add(m);
+        }
+        if (prod.size() > 0) {
+            o.add("produces", prod);
+        }
         if ("battlefield".equals(zone)) {
             // Non-mana activations this turn: botpolicy's per-source budget
             // (Card.Activated) is what ends a free repeatable ability's loop.
@@ -266,7 +409,7 @@ public final class BridgeController extends PlayerControllerAi {
 
     private JsonObject ask(String kind, Player me, JsonArray options) {
         JsonObject req = new JsonObject();
-        req.addProperty("v", 1);
+        req.addProperty("v", WIRE_VERSION);
         req.addProperty("kind", kind);
         req.addProperty("seat", seat);
         req.add("board", board(me));
@@ -605,7 +748,7 @@ public final class BridgeController extends PlayerControllerAi {
             return;
         }
         JsonObject req = new JsonObject();
-        req.addProperty("v", 1);
+        req.addProperty("v", WIRE_VERSION);
         req.addProperty("kind", "attackers");
         req.addProperty("seat", seat);
         req.add("board", board(attacker));
