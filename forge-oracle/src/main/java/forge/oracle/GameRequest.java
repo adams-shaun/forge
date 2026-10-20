@@ -46,11 +46,15 @@ public final class GameRequest {
         public final String name;
         public final List<String> deck;
         public final String bridge;
+        /** Extra arguments for the bridge binary (for example
+         * ["-policy", "forge-heuristic"]), passed before its -seed. */
+        public final List<String> bridgeArgs;
 
-        Seat(String name, List<String> deck, String bridge) {
+        Seat(String name, List<String> deck, String bridge, List<String> bridgeArgs) {
             this.name = name;
             this.deck = Collections.unmodifiableList(deck);
             this.bridge = bridge;
+            this.bridgeArgs = Collections.unmodifiableList(bridgeArgs);
         }
     }
 
@@ -87,7 +91,13 @@ public final class GameRequest {
             if (deck.isEmpty()) {
                 throw new IllegalArgumentException("seat " + i + " has an empty deck");
             }
-            seats.add(new Seat(strOr(so, "name", "p" + i), deck, str(so, "bridge")));
+            List<String> bridgeArgs = new java.util.ArrayList<>();
+            if (so.has("bridge_args")) {
+                for (var arg : so.getAsJsonArray("bridge_args")) {
+                    bridgeArgs.add(arg.getAsString());
+                }
+            }
+            seats.add(new Seat(strOr(so, "name", "p" + i), deck, str(so, "bridge"), bridgeArgs));
             i++;
         }
         if (seats.size() != 2) {
