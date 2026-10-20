@@ -119,29 +119,69 @@ public final class BridgeController extends PlayerControllerAi {
         return out;
     }
 
+    // ---- seats ------------------------------------------------------------
+
+    /** The wire's seat number for a player: its index in the game's
+     * REGISTERED player list, which is the request's seat order and never
+     * shrinks when a player loses. Every player reference that goes on the
+     * wire (life keys, creature controllers, defenders, stack controllers)
+     * goes through this one helper, so the bridge can never mix Forge's
+     * player ids with seat indices. */
+    private int seatOf(Player p) {
+        int i = getGame().getRegisteredPlayers().indexOf(p);
+        if (i < 0) {
+            throw new IllegalStateException("player " + p + " is not a registered player of this game");
+        }
+        return i;
+    }
+
+    private boolean seatChecked;
+
+    /** Asserts, on the first ask, that the deciding player is this
+     * controller's seat and that its own creatures come out with
+     * controller == me: a mismatch would make the policy see no attackers or
+     * blockers of its own. */
+    private void checkSeat(Player me) {
+        if (seatChecked) {
+            return;
+        }
+        if (seatOf(me) != seat || seatOf(player) != seat) {
+            throw new IllegalStateException("bridge seat " + seat + " but the deciding player is seat "
+                    + seatOf(me) + " (controller player seat " + seatOf(player) + ")");
+        }
+        for (Card c : me.getCreaturesInPlay()) {
+            if (seatOf(c.getController()) != seat) {
+                throw new IllegalStateException("own creature " + c + " reports controller seat "
+                        + seatOf(c.getController()) + ", not " + seat);
+            }
+        }
+        seatChecked = true;
+    }
+
     // ---- board export -----------------------------------------------------
 
     /** The facts a seat may see: every battlefield, every life total, and the
      * deciding seat's own hand, graveyard, pool and command zone. An
      * opponent's hand never leaves this method. */
     private JsonObject board(Player me) {
+        checkSeat(me);
         JsonObject b = new JsonObject();
         b.addProperty("me", seat);
         b.addProperty("is_main", isMainPhase(me));
         JsonObject life = new JsonObject();
-        for (int i = 0; i < getGame().getPlayers().size(); i++) {
-            life.addProperty(Integer.toString(i), getGame().getPlayers().get(i).getLife());
+        for (Player p : getGame().getRegisteredPlayers()) {
+            life.addProperty(Integer.toString(seatOf(p)), p.getLife());
         }
         b.add("life", life);
         JsonArray cre = new JsonArray();
-        for (Player p : getGame().getPlayers()) {
+        for (Player p : getGame().getRegisteredPlayers()) {
             for (Card c : p.getCardsIn(ZoneType.Battlefield)) {
                 if (!c.isCreature()) {
                     continue;
                 }
                 JsonObject o = new JsonObject();
                 o.addProperty("id", c.getId());
-                o.addProperty("controller", p.getId());
+                o.addProperty("controller", seatOf(c.getController()));
                 o.addProperty("power", c.getNetPower());
                 o.addProperty("toughness", c.getNetToughness());
                 o.addProperty("damage", c.getDamage());
@@ -220,15 +260,15 @@ public final class BridgeController extends PlayerControllerAi {
 
     /** The entity an attacker is attacking, in the wire's vocabulary: a seat,
      * plus the object id when it is a permanent (planeswalker or battle). */
-    private static JsonObject defenderFact(Card attacker, GameEntity defender) {
+    private JsonObject defenderFact(Card attacker, GameEntity defender) {
         JsonObject d = new JsonObject();
         d.addProperty("attacker", attacker.getId());
         if (defender instanceof Card) {
             Card c = (Card) defender;
-            d.addProperty("seat", c.getController().getId());
+            d.addProperty("seat", seatOf(c.getController()));
             d.addProperty("obj", c.getId());
         } else if (defender instanceof Player) {
-            d.addProperty("seat", ((Player) defender).getId());
+            d.addProperty("seat", seatOf((Player) defender));
             d.addProperty("obj", 0);
         } else {
             throw new IllegalStateException("attacker " + attacker.getName()
