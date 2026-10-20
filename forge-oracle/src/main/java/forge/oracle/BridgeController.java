@@ -208,6 +208,11 @@ public final class BridgeController extends PlayerControllerAi {
         for (Card c : me.getCardsIn(ZoneType.Battlefield)) {
             cards.add(cardFact(c, "battlefield", false));
         }
+        // Exile is public; the seat's own exiled cards are what an
+        // exile-zone cast (adventure, foretell, plot, impulse draw) names.
+        for (Card c : me.getCardsIn(ZoneType.Exile)) {
+            cards.add(cardFact(c, "exile", false));
+        }
         b.add("cards", cards);
         JsonArray pool = new JsonArray();
         // gorge's pool is a fixed typed array; the bridge reports the plain
@@ -245,6 +250,17 @@ public final class BridgeController extends PlayerControllerAi {
         o.addProperty("mana_cost", c.getManaCost() == null ? "" : c.getManaCost().toString());
         o.addProperty("castable", castable);
         o.addProperty("on_battlefield", "battlefield".equals(zone));
+        if ("battlefield".equals(zone)) {
+            // Non-mana activations this turn: botpolicy's per-source budget
+            // (Card.Activated) is what ends a free repeatable ability's loop.
+            int n = 0;
+            for (SpellAbility sa : c.getSpellAbilities()) {
+                if (sa.isActivatedAbility() && !sa.isManaAbility()) {
+                    n += sa.getActivationsThisTurn();
+                }
+            }
+            o.addProperty("activated", n);
+        }
         return o;
     }
 
@@ -331,9 +347,13 @@ public final class BridgeController extends PlayerControllerAi {
         return List.of(all.get(pick.get(0)));
     }
 
-    /** The cards whose abilities the priority offer considers. */
+    /** The cards whose abilities the priority offer considers: Forge AI's own
+     * candidate set (hand, own graveyard, every library's top card, own
+     * command zone, every exile and every battlefield), so battlefield
+     * activations and graveyard/exile/command casts are offered too. canPlay
+     * then keeps only what this seat may actually activate or cast. */
     private CardCollection offerCards() {
-        return new CardCollection(player.getCardsIn(ZoneType.Hand));
+        return forge.ai.ComputerUtilAbility.getAvailableCards(getGame(), player);
     }
 
     /** Every SpellAbility the seat can play AND pay for right now, in a stable
