@@ -24,6 +24,7 @@ import forge.ai.LobbyPlayerAi;
 import forge.ai.PlayerControllerAi;
 import forge.game.Game;
 import forge.game.GameEntity;
+import forge.game.GameObject;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
@@ -34,9 +35,16 @@ import forge.game.keyword.Keyword;
 import forge.game.keyword.KeywordInterface;
 import forge.game.phase.PhaseType;
 import forge.game.player.Player;
+import forge.game.player.DelayedReveal;
+import forge.game.player.PlayerActionConfirmMode;
+import forge.game.player.PlayerController.BinaryChoiceType;
+import forge.game.spellability.AbilitySub;
+import forge.game.spellability.OptionalCostValue;
 import forge.game.spellability.SpellAbility;
 import forge.game.spellability.SpellAbilityStackInstance;
+import forge.game.spellability.TargetChoices;
 import forge.game.zone.ZoneType;
+import forge.util.collect.FCollectionView;
 
 /**
  * One Forge seat played by gorge's bot over a stdio bridge.
@@ -111,6 +119,7 @@ public final class BridgeController extends PlayerControllerAi {
             throw new IllegalStateException("bridge is broken; the match cannot continue");
         }
         asksByKind.merge(req.get("kind").getAsString(), 1, Integer::sum);
+        askCount++;
         int nOpts = req.getAsJsonArray("options").size();
         optionsTotal += nOpts;
         optionsMax = Math.max(optionsMax, nOpts);
@@ -482,6 +491,10 @@ public final class BridgeController extends PlayerControllerAi {
 
     @Override
     public List<SpellAbility> chooseSpellAbilityToPlay() {
+        return br("chooseSpellAbilityToPlay", this::pickToPlay);
+    }
+
+    private List<SpellAbility> pickToPlay() {
         // The FULL legal action set, not the parent's pick: the parent's
         // chooseSpellAbilityToPlay returns at most one ability (its answer),
         // so asking the bridge about it would never pose a choice.
@@ -548,6 +561,7 @@ public final class BridgeController extends PlayerControllerAi {
             // the wire yet: take the largest X Forge can pay, counted as a
             // fallback.
             fallback("xValue");
+            coverage("xValue")[1]++;
             chosen.setXManaCostPaid(forge.ai.ComputerUtilMana.determineLeftoverMana(chosen, player, false));
         }
         if (needsTargets(chosen)) {
@@ -557,7 +571,7 @@ public final class BridgeController extends PlayerControllerAi {
             // Targets stay Forge's (the counted chooseTargetsFor fallback)
             // until a target ask exists on the wire.
             chosen.resetTargets();
-            chooseTargetsFor(chosen);
+            handOff(() -> chooseTargetsFor(chosen));
             if (!targetsValid(chosen)) {
                 // The offer filter admitted it (every mandatory target had a
                 // candidate) but Forge's targeting found no legal set. Do not
@@ -565,7 +579,7 @@ public final class BridgeController extends PlayerControllerAi {
                 fallback("targetsUnavailable");
                 chosen.resetTargets();
                 unavailable.add(chosen);
-                return chooseSpellAbilityToPlay();
+                return pickToPlay();
             }
         }
         unavailable.clear();
@@ -753,6 +767,13 @@ public final class BridgeController extends PlayerControllerAi {
 
     @Override
     public void declareAttackers(Player attacker, Combat combat) {
+        br("declareAttackers", () -> {
+            attack(attacker, combat);
+            return null;
+        });
+    }
+
+    private void attack(Player attacker, Combat combat) {
         // getLegalAttackers() is not the set of legal attackers: it returns the
         // single best COMPLETE attack map (fewest restriction violations), and
         // the empty map is often cheapest. Offering it asked the bridge
@@ -846,6 +867,13 @@ public final class BridgeController extends PlayerControllerAi {
 
     @Override
     public void declareBlockers(Player defender, Combat combat) {
+        br("declareBlockers", () -> {
+            block(defender, combat);
+            return null;
+        });
+    }
+
+    private void block(Player defender, Combat combat) {
         // A block is a (blocker, attacker) PAIR, so the offer is every legal
         // pair: one option per (blocker, attacker) combination, the same shape
         // gorge's own engine publishes (engine/rules/combat.go). Each option
@@ -928,7 +956,675 @@ public final class BridgeController extends PlayerControllerAi {
         // miss here is a rules difference, not a strategy one, so the parent
         // answers and the fallback is counted.
         fallback("chooseTargetsFor");
-        return super.chooseTargetsFor(sa);
+        return fb("chooseTargetsFor", () -> super.chooseTargetsFor(sa));
+    }
+
+    // ---- decision coverage ------------------------------------------------
+    //
+    // Every PlayerController decision method a game can reach is overridden
+    // below. A bridged method bumps "bridged" when it asked the wire and
+    // "trivial" when there was nothing to ask; every other one bumps
+    // "fallback" and delegates to the AI parent unchanged, so the counters
+    // never change a game. A decision method the AI parent reaches from
+    // INSIDE another fallback (an overload delegating to its sibling, a
+    // mana-ability colour choice during the AI's payment) is part of that
+    // outer decision: it is counted as "nested", not as a second fallback.
+    // One reached while a bridged method builds its own offer is a "probe".
+    //
+    // Not overridden (not choices): the reveal overloads, notifyOfValue,
+    // revealAnte, revealAISkipCards and revealUnsupported (notifications);
+    // autoPassCancel, awaitNextInput, cancelAwaitNextInput and
+    // resetAtEndOfTurn (GUI/turn hooks); isAI, isGuiPlayer, getFullControl,
+    // isFullControl, canPlayUnlimitedLands, isOrderedZone, getAnteResult and
+    // complainCardsCantPlayWell (queries); tempShowCards/endTempShowCards
+    // (display); cheatShuffle (the AI profile's mana-weighting shuffle hook,
+    // a no-op here: GameRules.allowCheatShuffle defaults false and the driver
+    // never sets it). getAbilityToPlay(Card, List), reveal(DelayedReveal),
+    // chooseSomeType/3, chooseSector/2, chooseSprocket/1 and chooseBinary/3
+    // are final in the base and reach the counted overloads.
+
+    /** method -> {bridged, fallback, nested, trivial, probe}. */
+    private final Map<String, int[]> coverage = new java.util.TreeMap<>();
+    private int fbDepth;
+    /** Inside a bridged method's own body (building its offer). */
+    private int brDepth;
+    private int askCount;
+
+    int[] coverage(String method) {
+        return coverage.computeIfAbsent(method, k -> new int[5]);
+    }
+
+    /** A bridged method: "bridged" when it put at least one ask on the wire,
+     * "trivial" when it returned without one (no legal action but a pass, no
+     * creature able to attack or block): Forge posed no choice there. */
+    private <R> R br(String method, java.util.function.Supplier<R> body) {
+        int before = askCount;
+        brDepth++;
+        try {
+            return body.get();
+        } finally {
+            brDepth--;
+            coverage(method)[askCount > before ? 0 : 3]++;
+        }
+    }
+
+    /** A decision the bridged pick hands to the AI parent on purpose (its
+     * targets): a real fallback, not one of the offer's probes. */
+    private <R> R handOff(java.util.function.Supplier<R> parent) {
+        int saved = brDepth;
+        brDepth = 0;
+        try {
+            return parent.get();
+        } finally {
+            brDepth = saved;
+        }
+    }
+
+    private <R> R fb(String method, java.util.function.Supplier<R> parent) {
+        // probe: reached while the bridge builds its own offer (the D1
+        // affordability check runs Forge's cost adjustment in test mode,
+        // which asks chooseCardsToDelve); Forge posed nothing there.
+        coverage(method)[brDepth > 0 && fbDepth == 0 ? 4 : fbDepth == 0 ? 1 : 2]++;
+        fbDepth++;
+        try {
+            return parent.get();
+        } finally {
+            fbDepth--;
+        }
+    }
+
+    private void fbv(String method, Runnable parent) {
+        fb(method, () -> {
+            parent.run();
+            return null;
+        });
+    }
+
+    /** {method: {bridged, fallback[, nested][, trivial][, probe]}}, sorted by method name. */
+    public JsonObject decisionCoverage() {
+        JsonObject o = new JsonObject();
+        for (var e : coverage.entrySet()) {
+            JsonObject m = new JsonObject();
+            m.addProperty("bridged", e.getValue()[0]);
+            m.addProperty("fallback", e.getValue()[1]);
+            if (e.getValue()[2] != 0) {
+                m.addProperty("nested", e.getValue()[2]);
+            }
+            if (e.getValue()[3] != 0) {
+                m.addProperty("trivial", e.getValue()[3]);
+            }
+            if (e.getValue()[4] != 0) {
+                m.addProperty("probe", e.getValue()[4]);
+            }
+            o.add(e.getKey(), m);
+        }
+        return o;
+    }
+
+    @Override
+    public SpellAbility getAbilityToPlay(Card hostCard, List<SpellAbility> abilities, forge.util.ITriggerEvent triggerEvent) {
+        return fb("getAbilityToPlay", () -> super.getAbilityToPlay(hostCard, abilities, triggerEvent));
+    }
+
+    @Override
+    public void playSpellAbilityNoStack(SpellAbility effectSA, boolean canSetupTargets) {
+        fbv("playSpellAbilityNoStack", () -> super.playSpellAbilityNoStack(effectSA, canSetupTargets));
+    }
+
+    @Override
+    public List<SpellAbility> orderSimultaneousSa(List<SpellAbility> activePlayerSAs) {
+        return fb("orderSimultaneousSa", () -> super.orderSimultaneousSa(activePlayerSAs));
+    }
+
+    @Override
+    public void orderAndPlaySimultaneousSa(List<SpellAbility> activePlayerSAs) {
+        fbv("orderAndPlaySimultaneousSa", () -> super.orderAndPlaySimultaneousSa(activePlayerSAs));
+    }
+
+    @Override
+    public boolean playTrigger(Card host, forge.game.trigger.WrappedAbility wrapperAbility, boolean isMandatory) {
+        return fb("playTrigger", () -> super.playTrigger(host, wrapperAbility, isMandatory));
+    }
+
+    @Override
+    public boolean playSaFromPlayEffect(SpellAbility tgtSA) {
+        return fb("playSaFromPlayEffect", () -> super.playSaFromPlayEffect(tgtSA));
+    }
+
+    @Override
+    public List<forge.item.PaperCard> sideboard(forge.deck.Deck deck, forge.game.GameType gameType, String message) {
+        return fb("sideboard", () -> super.sideboard(deck, gameType, message));
+    }
+
+    @Override
+    public List<forge.item.PaperCard> chooseCardsYouWonToAddToDeck(List<forge.item.PaperCard> losses) {
+        return fb("chooseCardsYouWonToAddToDeck", () -> super.chooseCardsYouWonToAddToDeck(losses));
+    }
+
+    @Override
+    public Map<Card, Integer> assignCombatDamage(Card attacker, CardCollectionView blockers, CardCollectionView remaining,
+            int damageDealt, GameEntity defender, boolean overrideOrder) {
+        return fb("assignCombatDamage",
+                () -> super.assignCombatDamage(attacker, blockers, remaining, damageDealt, defender, overrideOrder));
+    }
+
+    @Override
+    public Map<GameEntity, Integer> divideShield(Card effectSource, Map<GameEntity, Integer> affected, int shieldAmount) {
+        return fb("divideShield", () -> super.divideShield(effectSource, affected, shieldAmount));
+    }
+
+    @Override
+    public Map<Byte, Integer> specifyManaCombo(SpellAbility sa, forge.card.ColorSet colorSet, int manaAmount, boolean different) {
+        return fb("specifyManaCombo", () -> super.specifyManaCombo(sa, colorSet, manaAmount, different));
+    }
+
+    @Override
+    public CardCollectionView choosePermanentsToSacrifice(SpellAbility sa, int min, int max, CardCollectionView validTargets,
+            String message) {
+        return fb("choosePermanentsToSacrifice", () -> super.choosePermanentsToSacrifice(sa, min, max, validTargets, message));
+    }
+
+    @Override
+    public CardCollectionView choosePermanentsToDestroy(SpellAbility sa, int min, int max, CardCollectionView validTargets,
+            String message) {
+        return fb("choosePermanentsToDestroy", () -> super.choosePermanentsToDestroy(sa, min, max, validTargets, message));
+    }
+
+    @Override
+    public Integer announceRequirements(SpellAbility ability, int min, int max, String announce) {
+        return fb("announceRequirements", () -> super.announceRequirements(ability, min, max, announce));
+    }
+
+    @Override
+    public TargetChoices chooseNewTargetsFor(SpellAbility ability, java.util.function.Predicate<GameObject> filter,
+            boolean optional) {
+        return fb("chooseNewTargetsFor", () -> super.chooseNewTargetsFor(ability, filter, optional));
+    }
+
+    @Override
+    public org.apache.commons.lang3.tuple.Pair<SpellAbilityStackInstance, GameObject> chooseTarget(SpellAbility saSrc,
+            List<org.apache.commons.lang3.tuple.Pair<SpellAbilityStackInstance, GameObject>> allTargets) {
+        return fb("chooseTarget", () -> super.chooseTarget(saSrc, allTargets));
+    }
+
+    @Override
+    public boolean helpPayForAssistSpell(forge.game.mana.ManaCostBeingPaid cost, SpellAbility sa, int max, int requested) {
+        return fb("helpPayForAssistSpell", () -> super.helpPayForAssistSpell(cost, sa, max, requested));
+    }
+
+    @Override
+    public Player choosePlayerToAssistPayment(FCollectionView<Player> optionList, SpellAbility sa, String title, int max) {
+        return fb("choosePlayerToAssistPayment", () -> super.choosePlayerToAssistPayment(optionList, sa, title, max));
+    }
+
+    @Override
+    public CardCollectionView chooseCardsForEffect(CardCollectionView sourceList, SpellAbility sa, String title, int min,
+            int max, boolean isOptional, Map<String, Object> params) {
+        return fb("chooseCardsForEffect",
+                () -> super.chooseCardsForEffect(sourceList, sa, title, min, max, isOptional, params));
+    }
+
+    @Override
+    public CardCollection chooseCardsForEffectMultiple(Map<String, CardCollection> validMap, SpellAbility sa, String title,
+            boolean isOptional) {
+        return fb("chooseCardsForEffectMultiple", () -> super.chooseCardsForEffectMultiple(validMap, sa, title, isOptional));
+    }
+
+    @Override
+    public <T extends GameEntity> T chooseSingleEntityForEffect(FCollectionView<T> optionList, DelayedReveal delayedReveal,
+            SpellAbility sa, String title, boolean isOptional, Player targetedPlayer, Map<String, Object> params) {
+        return fb("chooseSingleEntityForEffect", () -> super.chooseSingleEntityForEffect(optionList, delayedReveal, sa,
+                title, isOptional, targetedPlayer, params));
+    }
+
+    @Override
+    public <T extends GameEntity> List<T> chooseEntitiesForEffect(FCollectionView<T> optionList, int min, int max,
+            DelayedReveal delayedReveal, SpellAbility sa, String title, Player targetedPlayer, Map<String, Object> params) {
+        return fb("chooseEntitiesForEffect", () -> super.chooseEntitiesForEffect(optionList, min, max, delayedReveal, sa,
+                title, targetedPlayer, params));
+    }
+
+    @Override
+    public List<SpellAbility> chooseSpellAbilitiesForEffect(List<SpellAbility> spells, SpellAbility sa, String title, int num,
+            Map<String, Object> params) {
+        return fb("chooseSpellAbilitiesForEffect", () -> super.chooseSpellAbilitiesForEffect(spells, sa, title, num, params));
+    }
+
+    @Override
+    public SpellAbility chooseSingleSpellForEffect(List<SpellAbility> spells, SpellAbility sa, String title,
+            Map<String, Object> params) {
+        return fb("chooseSingleSpellForEffect", () -> super.chooseSingleSpellForEffect(spells, sa, title, params));
+    }
+
+    @Override
+    public boolean confirmAction(SpellAbility sa, PlayerActionConfirmMode mode, String message, List<String> options,
+            Card cardToShow, Map<String, Object> params) {
+        return fb("confirmAction", () -> super.confirmAction(sa, mode, message, options, cardToShow, params));
+    }
+
+    @Override
+    public boolean confirmBidAction(SpellAbility sa, PlayerActionConfirmMode mode, String string, int bid, Player winner) {
+        return fb("confirmBidAction", () -> super.confirmBidAction(sa, mode, string, bid, winner));
+    }
+
+    @Override
+    public boolean confirmReplacementEffect(forge.game.replacement.ReplacementEffect replacementEffect, SpellAbility effectSA,
+            GameEntity affected, String question) {
+        return fb("confirmReplacementEffect",
+                () -> super.confirmReplacementEffect(replacementEffect, effectSA, affected, question));
+    }
+
+    @Override
+    public boolean confirmStaticApplication(Card hostCard, PlayerActionConfirmMode mode, String message, String logic) {
+        return fb("confirmStaticApplication", () -> super.confirmStaticApplication(hostCard, mode, message, logic));
+    }
+
+    @Override
+    public boolean confirmTrigger(forge.game.trigger.WrappedAbility wrapper) {
+        return fb("confirmTrigger", () -> super.confirmTrigger(wrapper));
+    }
+
+    @Override
+    public List<Card> exertAttackers(List<Card> attackers) {
+        return fb("exertAttackers", () -> super.exertAttackers(attackers));
+    }
+
+    @Override
+    public List<Card> enlistAttackers(List<Card> attackers) {
+        return fb("enlistAttackers", () -> super.enlistAttackers(attackers));
+    }
+
+    @Override
+    public CardCollection orderBlockers(Card attacker, CardCollection blockers) {
+        return fb("orderBlockers", () -> super.orderBlockers(attacker, blockers));
+    }
+
+    @Override
+    public CardCollection orderBlocker(Card attacker, Card blocker, CardCollection oldBlockers) {
+        return fb("orderBlocker", () -> super.orderBlocker(attacker, blocker, oldBlockers));
+    }
+
+    @Override
+    public CardCollection orderAttackers(Card blocker, CardCollection attackers) {
+        return fb("orderAttackers", () -> super.orderAttackers(blocker, attackers));
+    }
+
+    @Override
+    public org.apache.commons.lang3.tuple.ImmutablePair<CardCollection, CardCollection> arrangeForScry(CardCollection topN) {
+        return fb("arrangeForScry", () -> super.arrangeForScry(topN));
+    }
+
+    @Override
+    public org.apache.commons.lang3.tuple.ImmutablePair<CardCollection, CardCollection> arrangeForSurveil(CardCollection topN) {
+        return fb("arrangeForSurveil", () -> super.arrangeForSurveil(topN));
+    }
+
+    @Override
+    public boolean willPutCardOnTop(Card c) {
+        return fb("willPutCardOnTop", () -> super.willPutCardOnTop(c));
+    }
+
+    @Override
+    public CardCollectionView orderMoveToZoneList(CardCollectionView cards, ZoneType destinationZone, SpellAbility source) {
+        return fb("orderMoveToZoneList", () -> super.orderMoveToZoneList(cards, destinationZone, source));
+    }
+
+    @Override
+    public CardCollectionView chooseCardsToDiscardFrom(Player p, SpellAbility sa, CardCollection validCards, int min, int max) {
+        return fb("chooseCardsToDiscardFrom", () -> super.chooseCardsToDiscardFrom(p, sa, validCards, min, max));
+    }
+
+    @Override
+    public CardCollection chooseCardsToDiscardFrom(Player p, SpellAbility sa, CardCollection validCards, int min, int max,
+            CardCollectionView visibleToChooser) {
+        return fb("chooseCardsToDiscardFrom", () -> super.chooseCardsToDiscardFrom(p, sa, validCards, min, max, visibleToChooser));
+    }
+
+    @Override
+    public CardCollectionView chooseCardsToDiscardUnlessType(int num, CardCollectionView hand, String[] uTypes, SpellAbility sa) {
+        return fb("chooseCardsToDiscardUnlessType", () -> super.chooseCardsToDiscardUnlessType(num, hand, uTypes, sa));
+    }
+
+    @Override
+    public CardCollectionView chooseCardsToDiscardToMaximumHandSize(int numDiscard) {
+        return fb("chooseCardsToDiscardToMaximumHandSize", () -> super.chooseCardsToDiscardToMaximumHandSize(numDiscard));
+    }
+
+    @Override
+    public CardCollectionView chooseCardsToDelve(int genericAmount, CardCollection grave) {
+        return fb("chooseCardsToDelve", () -> super.chooseCardsToDelve(genericAmount, grave));
+    }
+
+    @Override
+    public Map<Card, forge.card.mana.ManaCostShard> chooseCardsForConvokeOrImprovise(SpellAbility sa,
+            forge.card.mana.ManaCost manaCost, CardCollectionView untappedCards, boolean artifacts, boolean creatures,
+            Integer maxReduction) {
+        return fb("chooseCardsForConvokeOrImprovise", () -> super.chooseCardsForConvokeOrImprovise(sa, manaCost, untappedCards,
+                artifacts, creatures, maxReduction));
+    }
+
+    @Override
+    public List<Card> chooseCardsForSplice(SpellAbility sa, List<Card> cards) {
+        return fb("chooseCardsForSplice", () -> super.chooseCardsForSplice(sa, cards));
+    }
+
+    @Override
+    public CardCollectionView chooseCardsToRevealFromHand(int min, int max, CardCollectionView valid) {
+        return fb("chooseCardsToRevealFromHand", () -> super.chooseCardsToRevealFromHand(min, max, valid));
+    }
+
+    @Override
+    public List<SpellAbility> chooseSaToActivateFromOpeningHand(List<SpellAbility> usableFromOpeningHand) {
+        return fb("chooseSaToActivateFromOpeningHand", () -> super.chooseSaToActivateFromOpeningHand(usableFromOpeningHand));
+    }
+
+    @Override
+    public Player chooseStartingPlayer(boolean isFirstGame) {
+        return fb("chooseStartingPlayer", () -> super.chooseStartingPlayer(isFirstGame));
+    }
+
+    @Override
+    public forge.game.zone.PlayerZone chooseStartingHand(List<forge.game.zone.PlayerZone> zones) {
+        return fb("chooseStartingHand", () -> super.chooseStartingHand(zones));
+    }
+
+    @Override
+    public forge.game.mana.Mana chooseManaFromPool(List<forge.game.mana.Mana> manaChoices) {
+        return fb("chooseManaFromPool", () -> super.chooseManaFromPool(manaChoices));
+    }
+
+    @Override
+    public String chooseSomeType(String kindOfType, SpellAbility sa, java.util.Collection<String> validTypes, boolean isOptional) {
+        return fb("chooseSomeType", () -> super.chooseSomeType(kindOfType, sa, validTypes, isOptional));
+    }
+
+    @Override
+    public String chooseSector(Card assignee, String ai, List<String> sectors) {
+        return fb("chooseSector", () -> super.chooseSector(assignee, ai, sectors));
+    }
+
+    @Override
+    public forge.game.card.sticker.Sticker chooseSticker(List<forge.game.card.sticker.Sticker> options, Card target,
+            SpellAbility sa, boolean isOptional) {
+        return fb("chooseSticker", () -> super.chooseSticker(options, target, sa, isOptional));
+    }
+
+    @Override
+    public int chooseStickerNamePosition(forge.game.card.sticker.Sticker sticker, Card target) {
+        return fb("chooseStickerNamePosition", () -> super.chooseStickerNamePosition(sticker, target));
+    }
+
+    @Override
+    public Card chooseCardToKeepStickers(CardCollectionView options) {
+        return fb("chooseCardToKeepStickers", () -> super.chooseCardToKeepStickers(options));
+    }
+
+    @Override
+    public List<Card> chooseContraptionsToCrank(List<Card> contraptions) {
+        return fb("chooseContraptionsToCrank", () -> super.chooseContraptionsToCrank(contraptions));
+    }
+
+    @Override
+    public int chooseSprocket(Card assignee, List<Integer> sprockets) {
+        return fb("chooseSprocket", () -> super.chooseSprocket(assignee, sprockets));
+    }
+
+    @Override
+    public forge.game.PlanarDice choosePDRollToIgnore(List<forge.game.PlanarDice> rolls) {
+        return fb("choosePDRollToIgnore", () -> super.choosePDRollToIgnore(rolls));
+    }
+
+    @Override
+    public Integer chooseRollToIgnore(List<Integer> rolls) {
+        return fb("chooseRollToIgnore", () -> super.chooseRollToIgnore(rolls));
+    }
+
+    @Override
+    public List<Integer> chooseDiceToReroll(List<Integer> rolls) {
+        return fb("chooseDiceToReroll", () -> super.chooseDiceToReroll(rolls));
+    }
+
+    @Override
+    public Integer chooseRollToModify(List<Integer> rolls) {
+        return fb("chooseRollToModify", () -> super.chooseRollToModify(rolls));
+    }
+
+    @Override
+    public forge.game.ability.effects.RollDiceEffect.DieRollResult chooseRollToSwap(
+            List<forge.game.ability.effects.RollDiceEffect.DieRollResult> rolls) {
+        return fb("chooseRollToSwap", () -> super.chooseRollToSwap(rolls));
+    }
+
+    @Override
+    public String chooseRollSwapValue(List<String> swapChoices, Integer currentResult, int power, int toughness) {
+        return fb("chooseRollSwapValue", () -> super.chooseRollSwapValue(swapChoices, currentResult, power, toughness));
+    }
+
+    @Override
+    public Object vote(SpellAbility sa, String prompt, List<Object> options,
+            com.google.common.collect.ListMultimap<Object, Player> votes, Player forPlayer, boolean optional) {
+        return fb("vote", () -> super.vote(sa, prompt, options, votes, forPlayer, optional));
+    }
+
+    @Override
+    public boolean mulliganKeepHand(Player firstPlayer, int cardsToReturn) {
+        return fb("mulliganKeepHand", () -> super.mulliganKeepHand(firstPlayer, cardsToReturn));
+    }
+
+    @Override
+    public CardCollectionView tuckCardsViaMulligan(CardCollectionView hand, int cardsToReturn) {
+        return fb("tuckCardsViaMulligan", () -> super.tuckCardsViaMulligan(hand, cardsToReturn));
+    }
+
+    @Override
+    public boolean playChosenSpellAbility(SpellAbility sa) {
+        // Not a separate question: it carries out a pick (gorge's, over the
+        // bridge) and is where the AI parent pays its costs -- mana sources,
+        // and any sacrifice/discard/tap cost part via its own AiCostDecision,
+        // which never comes back through the controller.
+        return fb("playChosenSpellAbility", () -> super.playChosenSpellAbility(sa));
+    }
+
+    @Override
+    public List<AbilitySub> chooseModeForAbility(SpellAbility sa, List<AbilitySub> possible, int min, int num,
+            boolean allowRepeat) {
+        return fb("chooseModeForAbility", () -> super.chooseModeForAbility(sa, possible, min, num, allowRepeat));
+    }
+
+    @Override
+    public int chooseNumberForCostReduction(SpellAbility sa, int min, int max) {
+        return fb("chooseNumberForCostReduction", () -> super.chooseNumberForCostReduction(sa, min, max));
+    }
+
+    @Override
+    public int chooseNumberForKeywordCost(SpellAbility sa, forge.game.cost.Cost cost, KeywordInterface keyword, String prompt,
+            int max) {
+        return fb("chooseNumberForKeywordCost", () -> super.chooseNumberForKeywordCost(sa, cost, keyword, prompt, max));
+    }
+
+    @Override
+    public boolean addKeywordCost(SpellAbility sa, forge.game.cost.Cost cost, KeywordInterface keyword, String prompt) {
+        return fb("addKeywordCost", () -> super.addKeywordCost(sa, cost, keyword, prompt));
+    }
+
+    @Override
+    public int chooseNumber(SpellAbility sa, String title, int min, int max) {
+        return fb("chooseNumber", () -> super.chooseNumber(sa, title, min, max));
+    }
+
+    @Override
+    public int chooseNumber(SpellAbility sa, String string, int min, int max, Map<String, Object> params) {
+        return fb("chooseNumber", () -> super.chooseNumber(sa, string, min, max, params));
+    }
+
+    @Override
+    public int chooseNumber(SpellAbility sa, String title, List<Integer> options, Player relatedPlayer) {
+        return fb("chooseNumber", () -> super.chooseNumber(sa, title, options, relatedPlayer));
+    }
+
+    @Override
+    public boolean chooseBinary(SpellAbility sa, String question, BinaryChoiceType kindOfChoice, Boolean defaultVal) {
+        return fb("chooseBinary", () -> super.chooseBinary(sa, question, kindOfChoice, defaultVal));
+    }
+
+    @Override
+    public boolean chooseBinary(SpellAbility sa, String question, BinaryChoiceType kindOfChoice, Map<String, Object> params) {
+        return fb("chooseBinary", () -> super.chooseBinary(sa, question, kindOfChoice, params));
+    }
+
+    @Override
+    public boolean chooseFlipResult(SpellAbility sa, Player flipper, boolean call) {
+        return fb("chooseFlipResult", () -> super.chooseFlipResult(sa, flipper, call));
+    }
+
+    @Override
+    public byte chooseColor(String message, SpellAbility sa, forge.card.ColorSet colors) {
+        return fb("chooseColor", () -> super.chooseColor(message, sa, colors));
+    }
+
+    @Override
+    public byte chooseColorAllowColorless(String message, Card card, forge.card.ColorSet colors) {
+        return fb("chooseColorAllowColorless", () -> super.chooseColorAllowColorless(message, card, colors));
+    }
+
+    @Override
+    public forge.card.ColorSet chooseColors(String message, SpellAbility sa, int min, int max, forge.card.ColorSet options) {
+        return fb("chooseColors", () -> super.chooseColors(message, sa, min, max, options));
+    }
+
+    @Override
+    public forge.card.ICardFace chooseSingleCardFace(SpellAbility sa, String message,
+            java.util.function.Predicate<forge.card.ICardFace> cpp, String name) {
+        return fb("chooseSingleCardFace", () -> super.chooseSingleCardFace(sa, message, cpp, name));
+    }
+
+    @Override
+    public forge.card.ICardFace chooseSingleCardFace(SpellAbility sa, List<forge.card.ICardFace> faces, String message) {
+        return fb("chooseSingleCardFace", () -> super.chooseSingleCardFace(sa, faces, message));
+    }
+
+    @Override
+    public forge.game.card.CardState chooseSingleCardState(SpellAbility sa, List<forge.game.card.CardState> states,
+            String message, Map<String, Object> params) {
+        return fb("chooseSingleCardState", () -> super.chooseSingleCardState(sa, states, message, params));
+    }
+
+    @Override
+    public boolean chooseCardsPile(SpellAbility sa, CardCollectionView pile1, CardCollectionView pile2, String faceUp) {
+        return fb("chooseCardsPile", () -> super.chooseCardsPile(sa, pile1, pile2, faceUp));
+    }
+
+    @Override
+    public forge.game.card.CounterType chooseCounterType(List<forge.game.card.CounterType> options, SpellAbility sa,
+            String prompt, Map<String, Object> params) {
+        return fb("chooseCounterType", () -> super.chooseCounterType(options, sa, prompt, params));
+    }
+
+    @Override
+    public String chooseKeywordForPump(List<String> options, SpellAbility sa, String prompt, Card tgtCard) {
+        return fb("chooseKeywordForPump", () -> super.chooseKeywordForPump(options, sa, prompt, tgtCard));
+    }
+
+    @Override
+    public boolean confirmPayment(forge.game.cost.CostPart costPart, String prompt, SpellAbility sa) {
+        return fb("confirmPayment", () -> super.confirmPayment(costPart, prompt, sa));
+    }
+
+    @Override
+    public forge.game.replacement.ReplacementEffect chooseSingleReplacementEffect(
+            List<forge.game.replacement.ReplacementEffect> possibleReplacers) {
+        return fb("chooseSingleReplacementEffect", () -> super.chooseSingleReplacementEffect(possibleReplacers));
+    }
+
+    @Override
+    public forge.game.staticability.StaticAbility chooseSingleStaticAbility(
+            List<forge.game.staticability.StaticAbility> possibleStatics) {
+        return fb("chooseSingleStaticAbility", () -> super.chooseSingleStaticAbility(possibleStatics));
+    }
+
+    @Override
+    public String chooseProtectionType(SpellAbility sa, List<String> choices) {
+        return fb("chooseProtectionType", () -> super.chooseProtectionType(sa, choices));
+    }
+
+    @Override
+    public List<OptionalCostValue> chooseOptionalCosts(SpellAbility chosen, List<OptionalCostValue> optionalCostValues) {
+        return fb("chooseOptionalCosts", () -> super.chooseOptionalCosts(chosen, optionalCostValues));
+    }
+
+    @Override
+    public List<forge.game.cost.CostPart> orderCosts(List<forge.game.cost.CostPart> costs) {
+        return fb("orderCosts", () -> super.orderCosts(costs));
+    }
+
+    @Override
+    public boolean payCostToPreventEffect(forge.game.cost.Cost cost, SpellAbility sa, boolean alreadyPaid,
+            FCollectionView<Player> allPayers) {
+        return fb("payCostToPreventEffect", () -> super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers));
+    }
+
+    @Override
+    public boolean payCostDuringRoll(forge.game.cost.Cost cost, SpellAbility sa) {
+        return fb("payCostDuringRoll", () -> super.payCostDuringRoll(cost, sa));
+    }
+
+    @Override
+    public boolean payCombatCost(Card c, forge.game.cost.Cost cost, SpellAbility sa, String prompt) {
+        return fb("payCombatCost", () -> super.payCombatCost(c, cost, sa, prompt));
+    }
+
+    @Override
+    public boolean payManaCost(forge.card.mana.ManaCost toPay, forge.game.cost.CostPartMana costPartMana, SpellAbility sa,
+            String prompt, forge.game.mana.ManaConversionMatrix matrix, boolean effect) {
+        return fb("payManaCost", () -> super.payManaCost(toPay, costPartMana, sa, prompt, matrix, effect));
+    }
+
+    @Override
+    public boolean applyManaToCost(forge.game.mana.ManaCostBeingPaid toPay, SpellAbility ability, String prompt,
+            forge.game.mana.ManaConversionMatrix matrix, boolean effect) {
+        return fb("applyManaToCost", () -> super.applyManaToCost(toPay, ability, prompt, matrix, effect));
+    }
+
+    @Override
+    public CardCollectionView chooseCardsForCost(CardCollectionView optionList, SpellAbility sa,
+            forge.game.cost.CostPartWithList cpl, int amount, boolean isOptional, String prompt) {
+        return fb("chooseCardsForCost", () -> super.chooseCardsForCost(optionList, sa, cpl, amount, isOptional, prompt));
+    }
+
+    @Override
+    public forge.game.cost.CostDecisionMakerBase getCostDecisionMaker(Player p, SpellAbility ability, boolean effect) {
+        return fb("getCostDecisionMaker", () -> super.getCostDecisionMaker(p, ability, effect));
+    }
+
+    @Override
+    public forge.game.cost.CostDecisionMakerBase getCostDecisionMaker(Player p, SpellAbility ability, boolean effect,
+            String prompt) {
+        return fb("getCostDecisionMaker", () -> super.getCostDecisionMaker(p, ability, effect, prompt));
+    }
+
+    @Override
+    public String chooseCardName(SpellAbility sa, java.util.function.Predicate<forge.card.ICardFace> cpp, String valid,
+            String message) {
+        return fb("chooseCardName", () -> super.chooseCardName(sa, cpp, valid, message));
+    }
+
+    @Override
+    public String chooseCardName(SpellAbility sa, List<forge.card.ICardFace> faces, String message) {
+        return fb("chooseCardName", () -> super.chooseCardName(sa, faces, message));
+    }
+
+    @Override
+    public Card chooseSingleCardForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa,
+            CardCollection fetchList, DelayedReveal delayedReveal, String selectPrompt, boolean isOptional, Player decider) {
+        return fb("chooseSingleCardForZoneChange", () -> super.chooseSingleCardForZoneChange(destination, origin, sa,
+                fetchList, delayedReveal, selectPrompt, isOptional, decider));
+    }
+
+    @Override
+    public List<Card> chooseCardsForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa,
+            CardCollection fetchList, int min, int max, DelayedReveal delayedReveal, String selectPrompt, Player decider) {
+        return fb("chooseCardsForZoneChange", () -> super.chooseCardsForZoneChange(destination, origin, sa, fetchList, min,
+                max, delayedReveal, selectPrompt, decider));
     }
 
     /** Starts the bridge process. The caller owns it and must close it. */
