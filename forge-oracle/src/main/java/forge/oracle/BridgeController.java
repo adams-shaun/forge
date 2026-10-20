@@ -284,33 +284,10 @@ public final class BridgeController extends PlayerControllerAi {
         // The FULL legal action set, not the parent's pick: the parent's
         // chooseSpellAbilityToPlay returns at most one ability (its answer),
         // so asking the bridge about it would never pose a choice.
-        List<SpellAbility> all = new ArrayList<>();
-        CardCollectionView pool = player.getCardsIn(ZoneType.Hand);
-        all.addAll(forge.ai.ComputerUtilAbility.getSpellAbilities(pool, player));
-        CardCollection lands = forge.ai.ComputerUtilAbility.getAvailableLandsToPlay(getGame(), player);
-        if (lands != null) {
-            for (Card land : lands) {
-                for (SpellAbility sa : land.getAllPossibleAbilities(player, true)) {
-                    if (sa.isLandAbility()) {
-                        all.add(sa);
-                    }
-                }
-            }
-        }
-        all.removeIf(sa -> !sa.canPlay());
-        // One option per (host, kind): a land offers both a play ability and a
-        // mana ability, and offering both would let the bridge choose "play
-        // this land" twice with different indices.
-        Map<String, SpellAbility> unique = new LinkedHashMap<>();
-        for (SpellAbility sa : all) {
-            Card host = sa.getHostCard();
-            String key = (host == null ? "?" : host.getId()) + "/" + actionKind(sa);
-            unique.putIfAbsent(key, sa);
-        }
-        all = new ArrayList<>(unique.values());
+        List<SpellAbility> all = offer();
         if (all.isEmpty()) {
             // Forge's "pass": an empty list is how a controller declines.
-            return all;
+            return new ArrayList<>();
         }
         JsonArray opts = new JsonArray();
         for (int i = 0; i < all.size(); i++) {
@@ -318,10 +295,17 @@ public final class BridgeController extends PlayerControllerAi {
             JsonObject o = new JsonObject();
             o.addProperty("index", i);
             o.addProperty("kind", actionKind(sa));
-            o.addProperty("label", sa.getDescription());
             Card host = sa.getHostCard();
+            o.addProperty("label", label(sa));
             if (host != null) {
                 o.addProperty("obj", host.getId());
+            }
+            String mode = mode(sa);
+            if (!mode.isEmpty()) {
+                o.addProperty("mode", mode);
+            }
+            if (sa.getPayCosts() != null && sa.getPayCosts().getTotalMana() != null) {
+                o.addProperty("mana_cost", sa.getPayCosts().getTotalMana().toString());
             }
             opts.add(o);
         }
@@ -347,6 +331,129 @@ public final class BridgeController extends PlayerControllerAi {
         return List.of(all.get(pick.get(0)));
     }
 
+    /** The cards whose abilities the priority offer considers. */
+    private CardCollection offerCards() {
+        return new CardCollection(player.getCardsIn(ZoneType.Hand));
+    }
+
+    /** Every SpellAbility the seat can play AND pay for right now, in a stable
+     * order: one option per distinct SpellAbility, so each alternative cost
+     * (flashback, evoke, ...), each additional-cost variant and each single
+     * optional cost (kicker) is its own option, deduped only on the identical
+     * SpellAbility object. Affordability is Forge's own payment check
+     * (ComputerUtilMana.canPayManaCost plus the non-mana additional costs),
+     * so the bridge is never offered a cast Forge cannot pay for: before this
+     * every hand card was offered whenever its timing allowed, botpolicy
+     * picked the best one, the payment failed and the priority passed. */
+    private List<SpellAbility> offer() {
+        List<SpellAbility> base = new ArrayList<>();
+        for (Card c : offerCards()) {
+            base.addAll(c.getAllPossibleAbilities(player, false));
+        }
+        CardCollection lands = forge.ai.ComputerUtilAbility.getAvailableLandsToPlay(getGame(), player);
+        if (lands != null) {
+            for (Card land : lands) {
+                for (SpellAbility sa : land.getAllPossibleAbilities(player, true)) {
+                    if (sa.isLandAbility()) {
+                        base.add(sa);
+                    }
+                }
+            }
+        }
+        List<SpellAbility> out = new ArrayList<>();
+        for (SpellAbility sa : base) {
+            if (sa.isManaAbility()) {
+                continue; // Forge pays; a mana ability is never a choice here
+            }
+            sa.setActivatingPlayer(player);
+            if (sa.isLandAbility()) {
+                // A land offers both a play ability and its mana abilities;
+                // only the play ability is an action, once per land.
+                addOnce(out, sa);
+                continue;
+            }
+            for (SpellAbility v : forge.game.GameActionUtil.getAdditionalCostSpell(sa)) {
+                v.setActivatingPlayer(player);
+                addOnce(out, v);
+                for (forge.game.spellability.OptionalCostValue ocv : forge.game.GameActionUtil.getOptionalCostValues(v)) {
+                    SpellAbility k = forge.game.GameActionUtil.addOptionalCosts(v, List.of(ocv));
+                    k.setActivatingPlayer(player);
+                    addOnce(out, k);
+                }
+            }
+        }
+        out.removeIf(sa -> !playable(sa));
+        // A land can be reported twice (hand ability and the land list);
+        // keep the first.
+        List<SpellAbility> unique = new ArrayList<>();
+        java.util.Set<Integer> landHosts = new java.util.HashSet<>();
+        for (SpellAbility sa : out) {
+            if (sa.isLandAbility() && sa.getHostCard() != null && !landHosts.add(sa.getHostCard().getId())) {
+                continue;
+            }
+            unique.add(sa);
+        }
+        return unique;
+    }
+
+    private static void addOnce(List<SpellAbility> out, SpellAbility sa) {
+        for (SpellAbility o : out) {
+            if (o == sa) {
+                return;
+            }
+        }
+        out.add(sa);
+    }
+
+    /** Legal now and payable now. */
+    private boolean playable(SpellAbility sa) {
+        if (!sa.canPlay()) {
+            return false;
+        }
+        if (sa.isLandAbility()) {
+            return true;
+        }
+        return affordable(sa);
+    }
+
+    private boolean affordable(SpellAbility sa) {
+        return forge.ai.ComputerUtilMana.canPayManaCost(sa, player, 0, false)
+                && forge.game.cost.CostPayment.canPayAdditionalCosts(sa.getPayCosts(), sa, false, player);
+    }
+
+    /** gorge's option label shape: "Cast <name>" for a spell, "<name>: <text>"
+     * for an ability (botpolicy reads an ability's first digit run as its
+     * cost). */
+    private static String label(SpellAbility sa) {
+        Card host = sa.getHostCard();
+        String name = host == null ? "?" : host.getName();
+        if (sa.isLandAbility()) {
+            return "Play " + name;
+        }
+        if (sa.isSpell()) {
+            return "Cast " + name;
+        }
+        return name + ": " + sa.getDescription();
+    }
+
+    /** gorge's cast Mode for the variants botpolicy prices: a kicked cast and
+     * a flashback cast. Every other alternative is an ordinary cast. */
+    private static String mode(SpellAbility sa) {
+        if (!sa.isSpell()) {
+            return "";
+        }
+        if (sa.isFlashback()) {
+            return "flashback";
+        }
+        for (forge.game.spellability.OptionalCost oc : sa.getOptionalCosts()) {
+            String n = oc.name();
+            if (n.startsWith("Kicker") || n.equals("Multikicker")) {
+                return "kicked";
+            }
+        }
+        return "";
+    }
+
     private static String actionKind(SpellAbility sa) {
         if (sa.isLandAbility()) {
             return "play_land";
@@ -355,7 +462,7 @@ public final class BridgeController extends PlayerControllerAi {
             return "cast";
         }
         if (sa.isActivatedAbility()) {
-            return "activate";
+            return "ability";
         }
         return "other";
     }
