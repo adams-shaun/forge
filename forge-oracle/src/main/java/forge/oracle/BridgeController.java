@@ -307,6 +307,7 @@ public final class BridgeController extends PlayerControllerAi {
             // me again": the priority loop re-asks up to 999 times, stashing
             // the game state each round, before it gives up with "AI looped
             // too much". That loop was the ~30 s per game.
+            unavailable.clear();
             return null;
         }
         JsonArray opts = new JsonArray();
@@ -346,9 +347,67 @@ public final class BridgeController extends PlayerControllerAi {
                     + opts.size() + ")");
         }
         if (pick.get(0) == passIndex) {
+            unavailable.clear();
             return null; // Forge's pass (see above)
         }
-        return List.of(all.get(pick.get(0)));
+        SpellAbility chosen = all.get(pick.get(0));
+        if (needsTargets(chosen)) {
+            // Forge AI chooses targets inside its own canPlaySa, which the
+            // bridge's pick never runs: without this a chosen targeted
+            // spell or ability went to the stack with no targets at all.
+            // Targets stay Forge's (the counted chooseTargetsFor fallback)
+            // until a target ask exists on the wire.
+            chosen.resetTargets();
+            chooseTargetsFor(chosen);
+            if (!targetsValid(chosen)) {
+                // The offer filter admitted it (every mandatory target had a
+                // candidate) but Forge's targeting found no legal set. Do not
+                // turn that into a pass: drop the option and ask again.
+                fallback("targetsUnavailable");
+                chosen.resetTargets();
+                unavailable.add(chosen);
+                return chooseSpellAbilityToPlay();
+            }
+        }
+        unavailable.clear();
+        return List.of(chosen);
+    }
+
+    /** Options dropped for this priority window because Forge found no legal
+     * target set for them (see chooseSpellAbilityToPlay). */
+    private final List<SpellAbility> unavailable = new ArrayList<>();
+
+    private static boolean needsTargets(SpellAbility sa) {
+        for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
+            if (cur.usesTargeting()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean targetsValid(SpellAbility sa) {
+        for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
+            if (cur.usesTargeting() && !cur.isTargetNumberValid()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Every mandatory target slot in the chain has at least one candidate. */
+    private static boolean targetsPossible(SpellAbility sa) {
+        for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
+            if (!cur.usesTargeting()) {
+                continue;
+            }
+            var tr = cur.getTargetRestrictions();
+            Card host = cur.getHostCard();
+            if (tr.getMinTargets(host, cur) > 0 && tr.getNumCandidates(cur) == 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The cards whose abilities the priority offer considers: Forge AI's own
@@ -406,7 +465,7 @@ public final class BridgeController extends PlayerControllerAi {
                 }
             }
         }
-        out.removeIf(sa -> !playable(sa));
+        out.removeIf(sa -> !playable(sa) || unavailable.contains(sa));
         // A land can be reported twice (hand ability and the land list);
         // keep the first.
         List<SpellAbility> unique = new ArrayList<>();
@@ -437,7 +496,7 @@ public final class BridgeController extends PlayerControllerAi {
         if (sa.isLandAbility()) {
             return true;
         }
-        return affordable(sa);
+        return affordable(sa) && targetsPossible(sa);
     }
 
     private boolean affordable(SpellAbility sa) {
