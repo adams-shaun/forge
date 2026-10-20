@@ -1987,14 +1987,127 @@ public final class BridgeController extends PlayerControllerAi {
         return fb("vote", () -> super.vote(sa, prompt, options, votes, forPlayer, optional));
     }
 
+    // ---- mulligan ---------------------------------------------------------
+    //
+    // gorge decides keep/mulligan on the full seven knowing how many it will
+    // bottom, then bottoms (engine/rules/mulligan.go). This fork's London
+    // mulligan draws seven and calls tuckCardsViaMulligan at once, then asks
+    // mulliganKeepHand on the reduced hand. The bridge keeps gorge's order:
+    // at the tuck it asks the keep question over the seven, then (on keep)
+    // the bottoming question, and the following mulliganKeepHand returns that
+    // verdict without asking again. On a mulligan verdict the tuck returns
+    // the first n cards: the mulligan shuffles the whole hand back, so which
+    // n is immaterial. The opening seven (nothing to bottom) is asked in
+    // mulliganKeepHand directly.
+
+    /** The keep verdict the last tuck asked for, consumed by the next
+     * mulliganKeepHand. */
+    private Boolean tuckVerdict;
+
     @Override
     public boolean mulliganKeepHand(Player firstPlayer, int cardsToReturn) {
-        return fb("mulliganKeepHand", () -> super.mulliganKeepHand(firstPlayer, cardsToReturn));
+        if (fbDepth > 0 || brDepth > 0) {
+            return fb("mulliganKeepHand", () -> super.mulliganKeepHand(firstPlayer, cardsToReturn));
+        }
+        if (tuckVerdict != null) {
+            boolean keep = tuckVerdict;
+            tuckVerdict = null;
+            coverage("mulliganKeepHand")[0]++; // the bridge's verdict, asked at the tuck
+            return keep;
+        }
+        return br("mulliganKeepHand", () -> askKeep(cardsToReturn));
     }
 
     @Override
     public CardCollectionView tuckCardsViaMulligan(CardCollectionView hand, int cardsToReturn) {
-        return fb("tuckCardsViaMulligan", () -> super.tuckCardsViaMulligan(hand, cardsToReturn));
+        if (fbDepth > 0 || brDepth > 0 || cardsToReturn <= 0) {
+            return fb("tuckCardsViaMulligan", () -> super.tuckCardsViaMulligan(hand, cardsToReturn));
+        }
+        if (cardsToReturn > hand.size()) {
+            throw new IllegalStateException("tuck " + cardsToReturn + " of a " + hand.size() + "-card hand");
+        }
+        return br("tuckCardsViaMulligan", () -> {
+            boolean keep = askKeep(cardsToReturn);
+            tuckVerdict = keep;
+            List<Card> cards = new ArrayList<>();
+            for (Card c : hand) {
+                cards.add(c);
+            }
+            if (!keep) {
+                return CardCollection.getView(new CardCollection(cards.subList(0, cardsToReturn)));
+            }
+            return askBottom(cards, cardsToReturn);
+        });
+    }
+
+    /** gorge's keep/mulligan ask: "keep" then "mulligan", with the number of
+     * cards a keep bottoms. Forge only asks while a mulligan is allowed, so
+     * both are offered. */
+    private boolean askKeep(int toBottom) {
+        JsonArray opts = new JsonArray();
+        JsonObject k = new JsonObject();
+        k.addProperty("index", 0);
+        k.addProperty("kind", "keep");
+        k.addProperty("label", "keep");
+        opts.add(k);
+        JsonObject m = new JsonObject();
+        m.addProperty("index", 1);
+        m.addProperty("kind", "mulligan");
+        m.addProperty("label", "mulligan");
+        opts.add(m);
+        JsonObject req = mulliganReq(opts);
+        req.addProperty("mulligans", toBottom);
+        List<Integer> pick = choices(ask(req));
+        if (pick.size() != 1 || (pick.get(0) != 0 && pick.get(0) != 1)) {
+            throw new IllegalStateException("bridge keep answer " + pick + " is not keep or mulligan");
+        }
+        return pick.get(0) == 0;
+    }
+
+    /** gorge's bottoming ask: one "bottom" option per hand card, choose
+     * exactly n. */
+    private CardCollectionView askBottom(List<Card> hand, int n) {
+        JsonArray opts = new JsonArray();
+        for (int i = 0; i < hand.size(); i++) {
+            JsonObject o = new JsonObject();
+            o.addProperty("index", i);
+            o.addProperty("kind", "bottom");
+            o.addProperty("label", hand.get(i).getName());
+            o.addProperty("obj", hand.get(i).getId());
+            o.addProperty("player", seat);
+            opts.add(o);
+        }
+        JsonObject req = mulliganReq(opts);
+        req.addProperty("mulligans", n);
+        req.addProperty("min", n);
+        req.addProperty("max", n);
+        List<Integer> pick = choices(ask(req));
+        if (pick.size() != n || pick.stream().distinct().count() != n) {
+            throw new IllegalStateException("bridge bottoming answer " + pick + " is not " + n + " distinct cards");
+        }
+        CardCollection out = new CardCollection();
+        for (int i : pick) {
+            if (i < 0 || i >= hand.size()) {
+                throw new IllegalStateException("bridge bottoming answer " + pick + " names no hand card");
+            }
+            out.add(hand.get(i));
+        }
+        return out;
+    }
+
+    private JsonObject mulliganReq(JsonArray opts) {
+        JsonObject req = new JsonObject();
+        req.addProperty("v", WIRE_VERSION);
+        req.addProperty("kind", "mulligan");
+        req.addProperty("seat", seat);
+        pregame = true;
+        try {
+            req.add("board", board(player));
+        } finally {
+            pregame = false;
+        }
+        req.add("options", opts);
+        return req;
     }
 
     @Override
