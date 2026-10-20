@@ -39,14 +39,18 @@ public final class GameRequest {
     public final long seed;
     public final String name;
 
-    /** One seat's deck: card names with counts, in deck order. */
+    /** One seat's deck: card names with counts, in deck order. A seat with a
+     * bridge binary is played by gorge's bot over stdio; otherwise by Forge's
+     * AI. */
     public static final class Seat {
         public final String name;
         public final List<String> deck;
+        public final String bridge;
 
-        Seat(String name, List<String> deck) {
+        Seat(String name, List<String> deck, String bridge) {
             this.name = name;
             this.deck = Collections.unmodifiableList(deck);
+            this.bridge = bridge;
         }
     }
 
@@ -83,7 +87,7 @@ public final class GameRequest {
             if (deck.isEmpty()) {
                 throw new IllegalArgumentException("seat " + i + " has an empty deck");
             }
-            seats.add(new Seat(strOr(so, "name", "p" + i), deck));
+            seats.add(new Seat(strOr(so, "name", "p" + i), deck, str(so, "bridge")));
             i++;
         }
         if (seats.size() != 2) {

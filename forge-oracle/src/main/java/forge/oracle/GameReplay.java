@@ -87,8 +87,23 @@ public final class GameReplay {
         MyRandom.setRandom(new Random(req.seed));
 
         List<RegisteredPlayer> players = new ArrayList<>();
-        for (GameRequest.Seat s : req.seats) {
-            players.add(new RegisteredPlayer(buildDeck(s)).setPlayer(new LobbyPlayerAi(s.name, null)));
+        List<BridgeLobbyPlayer> bridges = new ArrayList<>();
+        List<Integer> bridgeSeats = new ArrayList<>();
+        for (int i = 0; i < req.seats.size(); i++) {
+            GameRequest.Seat s = req.seats.get(i);
+            LobbyPlayerAi lobby;
+            if (s.bridge.isEmpty()) {
+                lobby = new LobbyPlayerAi(s.name, null);
+            } else {
+                // Each bridged seat gets its own rng stream, derived from the
+                // game seed and the seat index exactly as bench derives a
+                // seat's policy seed, so a match is reproducible.
+                BridgeLobbyPlayer b = new BridgeLobbyPlayer(s.name, i, s.bridge, req.seed ^ (i + 1));
+                bridges.add(b);
+                bridgeSeats.add(i);
+                lobby = b;
+            }
+            players.add(new RegisteredPlayer(buildDeck(s)).setPlayer(lobby));
         }
         GameRules rules = new GameRules(GameType.Constructed);
         Match match = new Match(rules, players, "game");
@@ -100,8 +115,14 @@ public final class GameReplay {
 
         long start = System.nanoTime();
         Deadline deadline = new Deadline(start, req.maxMs, req.maxTurns, game);
-        match.startGame(game, deadline::check);
-        deadline.check();
+        try {
+            match.startGame(game, deadline::check);
+            deadline.check();
+        } finally {
+            for (BridgeLobbyPlayer b : bridges) {
+                b.close();
+            }
+        }
 
         JsonObject row = new JsonObject();
         row.addProperty("engine", ResultRow.ENGINE);
@@ -146,6 +167,25 @@ public final class GameReplay {
             row.addProperty("harness", "game did not finish within "
                     + (deadline.why != null ? deadline.why : "the caps"));
         }
+        // A bridged seat that fell back to Forge's AI on some question is
+        // reported, never hidden: the number says how much of the match the
+        // bridge actually played.
+        JsonArray bridgeFallbacks = new JsonArray();
+        for (int bi = 0; bi < bridges.size(); bi++) {
+            BridgeLobbyPlayer b = bridges.get(bi);
+            if (b.controller() == null) {
+                continue;
+            }
+            JsonObject fo = new JsonObject();
+            fo.addProperty("seat", bridgeSeats.get(bi));
+            JsonObject by = new JsonObject();
+            for (var e : b.controller().fallbacks().entrySet()) {
+                by.addProperty(e.getKey(), e.getValue());
+            }
+            fo.add("by_method", by);
+            bridgeFallbacks.add(fo);
+        }
+        row.add("bridge_fallbacks", bridgeFallbacks);
         row.addProperty("ms", (System.nanoTime() - start) / 1_000_000);
         row.addProperty("game_sha", gameSha(row));
         return row;
