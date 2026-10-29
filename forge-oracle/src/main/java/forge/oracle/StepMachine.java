@@ -162,6 +162,16 @@ public final class StepMachine {
         if (failure != null) {
             throw failure;
         }
+        // The last step's action ended the game (a pass that let lethal combat
+        // damage or a resolution through, CR 104.3): no priority follows, so
+        // the checkpoint the next priority would have taken is taken here, as
+        // gorge records its final snapshot with the game over. Only for the
+        // LAST step and only once it was acted on: a game that ends earlier,
+        // or before the step's action, is still a harness failure.
+        if (!done && game.isGameOver() && acted && stepIdx == steps.size() - 1) {
+            complete(Request.str(steps.get(stepIdx).getAsJsonObject(), "op"));
+            done = true;
+        }
         if (!done) {
             throw new HarnessError("game ended at step " + stepIdx + " before every step ran");
         }
