@@ -219,6 +219,10 @@ public final class StepMachine {
 
     // ---- the priority callback ---------------------------------------------
 
+    // Whether SetupBuilder.tapAfterUntap has run (once, at the scenario turn's
+    // first priority).
+    private boolean tappedAfterUntap;
+
     List<SpellAbility> onPriority(ScriptedController ctl) {
         if (done || failure != null) {
             return null;
@@ -234,6 +238,11 @@ public final class StepMachine {
         PhaseHandler ph = game.getPhaseHandler();
         Player p = ctl.getPlayer();
         if (stepIdx < 0) {
+            if (!tappedAfterUntap && ph.getTurn() == targetTurn) {
+                // The scenario turn's untap step is over: its late taps stand.
+                SetupBuilder.tapAfterUntap(this);
+                tappedAfterUntap = true;
+            }
             // gorge's xmageFixture setup stops at the FIRST main-1 priority of
             // the scenario turn, even with a non-empty stack (oracle_run.go:622-647).
             if (ph.getTurn() == targetTurn && ph.is(PhaseType.MAIN1) && p == ph.getPlayerTurn()) {
