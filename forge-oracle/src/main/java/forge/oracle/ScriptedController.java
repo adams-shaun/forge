@@ -403,6 +403,18 @@ public class ScriptedController extends PlayerControllerAi {
     public boolean applyManaToCost(ManaCostBeingPaid toPay, SpellAbility ability, String prompt, ManaConversionMatrix matrix, boolean effect) {
         ManaPool pool = player.getManaPool();
         int before = pool.totalMana();
+        // The units gorge spent on this step, when it recorded them: a hybrid or
+        // generic cost has several legal payments (Wildgrowth Archaic's {2/G}
+        // twice), and gorge's is the one to follow. Once per step.
+        if (m.step() != paidStep) {
+            paidStep = m.step();
+            for (char ch : m.req.payment(m.step()).toCharArray()) {
+                byte color = colorOf(ch);
+                if (color != 0 && !toPay.isPaid()) {
+                    pool.tryPayCostWithColor(color, ability, toPay, ability.getPayingMana());
+                }
+            }
+        }
         pool.payManaCostFromPool(toPay, ability, false, ability.getPayingMana());
         while (!toPay.isPaid() && !pool.isEmpty()) {
             boolean found = false;
@@ -418,6 +430,20 @@ public class ScriptedController extends PlayerControllerAi {
         }
         m.note("pay mana: pool " + before + " -> " + pool.totalMana() + ", paid=" + toPay.isPaid() + " for " + ability.getHostCard().getName());
         return toPay.isPaid();
+    }
+
+    private int paidStep = Integer.MIN_VALUE;
+
+    private static byte colorOf(char ch) {
+        switch (ch) {
+            case 'W': return ManaAtom.WHITE;
+            case 'U': return ManaAtom.BLUE;
+            case 'B': return ManaAtom.BLACK;
+            case 'R': return ManaAtom.RED;
+            case 'G': return ManaAtom.GREEN;
+            case 'C': return ManaAtom.COLORLESS;
+            default: return 0;
+        }
     }
 
     @Override

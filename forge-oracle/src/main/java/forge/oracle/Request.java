@@ -90,6 +90,18 @@ public final class Request {
         return e != null && e.isJsonArray() ? e.getAsJsonArray() : new JsonArray();
     }
 
+    /** The pool mana gorge spent on step i's cast or activate, as WUBRGC letters
+     * (the Item's parallel payment array): a multiset, "" when none was
+     * recorded or the step is out of range. */
+    public String payment(int i) {
+        JsonElement e = item == null ? null : item.get("payment");
+        if (i < 0 || e == null || !e.isJsonArray() || i >= e.getAsJsonArray().size()) {
+            return "";
+        }
+        JsonElement p = e.getAsJsonArray().get(i);
+        return p.isJsonPrimitive() ? p.getAsString() : "";
+    }
+
     /** The scenario turn, exactly as the XMage driver's scenarioTurn reads it
      * (ScenarioReplay.java:566-584): absent or null is 1; otherwise an
      * integer JSON number in 1..100, never a truncated fraction or a wrapped
