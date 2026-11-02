@@ -155,6 +155,28 @@ public final class Request {
         return out;
     }
 
+    /** Seat's graveyard after the step, top last, or after the step following it
+     * when Forge reaches the move a step early; null when the request names
+     * neither. From the "graveyards" gorge's replay recorded. */
+    public List<String> graveyard(int step, int seat) {
+        JsonElement g = raw.get("graveyards");
+        if (g == null || !g.isJsonObject()) {
+            return null;
+        }
+        for (int s = step; s <= step + 1; s++) {
+            JsonElement at = g.getAsJsonObject().get(Integer.toString(s));
+            if (at != null && at.isJsonObject() && at.getAsJsonObject().has(Integer.toString(seat))) {
+                return strings(at.getAsJsonObject(), Integer.toString(seat));
+            }
+        }
+        return null;
+    }
+
+    public static int intOf(JsonObject o, String k, int dflt) {
+        JsonElement e = o == null ? null : o.get(k);
+        return e != null && e.isJsonPrimitive() ? e.getAsInt() : dflt;
+    }
+
     /** The setup object of seat i ("p0"/"p1"), or an empty object. */
     public JsonObject seat(int i) {
         JsonElement s = item.get("setup");

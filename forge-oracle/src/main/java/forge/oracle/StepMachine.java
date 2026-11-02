@@ -26,6 +26,7 @@ import forge.game.GameStage;
 import forge.game.GameType;
 import forge.game.Match;
 import forge.game.ability.AbilityFactory;
+import forge.card.CardStateName;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
@@ -36,6 +37,8 @@ import forge.game.player.Player;
 import forge.game.player.RegisteredPlayer;
 import forge.game.spellability.AbilitySub;
 import forge.game.spellability.OptionalCostValue;
+import forge.game.spellability.AlternativeCost;
+import forge.game.spellability.OptionalCost;
 import forge.game.spellability.SpellAbility;
 import forge.game.spellability.SpellAbilityStackInstance;
 import forge.game.zone.ZoneType;
@@ -671,15 +674,66 @@ public final class StepMachine {
         return out;
     }
 
+    /** The spell ability the step's cast_mode names, among those the card offers
+     * its seat: a mode with no such ability stops the game and says so, rather
+     * than casting something else. The optional-cost modes cast the plain spell;
+     * chooseOptionalCosts pays them. */
     private SpellAbility spellFor(Card c, JsonObject st) {
-        List<SpellAbility> spells = new ArrayList<>(c.getSpells());
+        String mode = Request.str(st, "cast_mode");
+        Player p = seats[Request.intOf(st, "seat", 0)];
+        List<SpellAbility> spells = new ArrayList<>();
+        for (SpellAbility sa : c.getAllPossibleAbilities(p, false)) {
+            if (sa.isSpell()) {
+                spells.add(sa);
+            }
+        }
+        if (spells.isEmpty()) {
+            spells.addAll(c.getSpells());
+        }
         if (spells.isEmpty()) {
             throw new HarnessError(Request.str(st, "card") + " has no spell ability");
         }
-        if (spells.size() > 1) {
-            note("cast: " + spells.size() + " spell abilities on " + c.getName() + "; took the first: " + spells.get(0));
+        for (SpellAbility sa : spells) {
+            if (castModeMatches(sa, mode)) {
+                return sa;
+            }
         }
-        return spells.get(0);
+        throw new HarnessError("step " + stepIdx + " cast_mode \"" + mode + "\": " + Request.str(st, "card")
+                + " offers no such spell among " + spells);
+    }
+
+    private static OptionalCost optionalCostOf(String mode) {
+        switch (mode) {
+            case "kicked": return OptionalCost.Kicker1;
+            case "buyback": return OptionalCost.Buyback;
+            case "retrace": return OptionalCost.Retrace;
+            case "teamworked": return OptionalCost.Teamwork;
+            case "optionalcost": return OptionalCost.Generic;
+            default: return null;
+        }
+    }
+
+    private static boolean castModeMatches(SpellAbility sa, String mode) {
+        switch (mode) {
+            case "flashback": return sa.isFlashback();
+            case "adventure_alt": return sa.isAdventure();
+            case "omen_alt": return sa.isOmen();
+            case "foretell": return sa.isForetold();
+            case "plot_cast": return sa.isAlternativeCost(AlternativeCost.Plotted);
+            case "warp": case "warp_recast": return sa.isAlternativeCost(AlternativeCost.Warp);
+            case "surged": return sa.isAlternativeCost(AlternativeCost.Surge);
+            case "mayhem": return sa.isAlternativeCost(AlternativeCost.Mayhem);
+            case "mutated": return sa.isAlternativeCost(AlternativeCost.Mutate);
+            case "alternative": return sa.getAlternativeCost() != null;
+            case "split_alt": case "room_alt": case "modal_spell":
+                return sa.getCardState() != null && sa.getCardState().getStateName() != sa.getHostCard().getCurrentStateName()
+                        || sa.getCardStateName() != null && sa.getCardStateName() != CardStateName.Original;
+            case "": case "mayplay": case "mayflash": case "prepared_copy": case "suspend_cast": case "miracle":
+            case "kicked": case "multikicked": case "buyback": case "offspring": case "squadded":
+            case "optionalcost": case "replicated": case "teamworked": case "retrace":
+                return sa.getAlternativeCost() == null && !sa.isAdventure() && !sa.isOmen();
+            default: return false;
+        }
     }
 
     private SpellAbility landFor(Card c, JsonObject st) {
@@ -1234,6 +1288,19 @@ public final class StepMachine {
             note("optional cost step " + stepIdx + ": paid " + out);
             return out;
         }
+        JsonObject st = stepIdx >= 0 && stepIdx < steps.size() ? steps.get(stepIdx).getAsJsonObject() : null;
+        OptionalCost want = optionalCostOf(st == null ? "" : Request.str(st, "cast_mode"));
+        if (want != null) {
+            List<OptionalCostValue> out = new ArrayList<>();
+            for (OptionalCostValue v : values) {
+                if (v.getType() == want) {
+                    out.add(v);
+                    break;
+                }
+            }
+            note("optional cost step " + stepIdx + ": cast_mode paid " + out);
+            return out;
+        }
         note("optional cost step " + stepIdx + ": none of " + values + " (gorge logged none)");
         return new ArrayList<>();
     }
@@ -1367,8 +1434,42 @@ public final class StepMachine {
         if (names.size() <= 1) {
             return new ArrayList<>(cards); // identical names: the order is unobservable
         }
+        Decision d = take(seat, x -> x.kind.equals("order") && x.picks.size() == cards.size()
+                && (x.pickKinds.isEmpty() || !x.pickKinds.get(0).equals("trigger")));
+        if (d != null) {
+            List<Card> ordered = inNameOrder(cards, d.picks);
+            if (ordered != null) {
+                note("order step " + stepIdx + ": gorge's " + d.gorgeKind);
+                return ordered;
+            }
+        }
+        if (what.endsWith("Graveyard")) {
+            List<String> yard = req.graveyard(stepIdx, seat);
+            List<Card> ordered = yard == null ? null : inNameOrder(cards, yard);
+            if (ordered != null) {
+                note("order step " + stepIdx + ": gorge's graveyard");
+                return ordered;
+            }
+        }
         miss("order", what);
         return null;
+    }
+
+    /** cards in the order their names come in names, which may hold other cards
+     * too; null when one of them is not there. */
+    private static List<Card> inNameOrder(Collection<Card> cards, List<String> names) {
+        List<Card> left = new ArrayList<>(cards);
+        List<Card> out = new ArrayList<>();
+        for (String n : names) {
+            for (Card c : left) {
+                if (SnapshotWriter.zoneName(c).equals(n) || c.getName().equals(n)) {
+                    out.add(c);
+                    left.remove(c);
+                    break;
+                }
+            }
+        }
+        return left.isEmpty() ? out : null;
     }
 
     /** gorge's trigger_order ("order" kind, pick kinds "trigger"): picks[0]
