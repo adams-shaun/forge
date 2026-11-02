@@ -19,7 +19,8 @@ import com.google.gson.JsonParser;
  * <pre>
  * {"id": "...", "scenario_sha": "...", "item": {...the Item as gen wrote it...},
  *  "gorge_decisions": [...rules.OracleDecision...],
- *  "abilities": {"&lt;step index&gt;": "&lt;Face.Abilities[ability_index].Line&gt;"}}
+ *  "abilities": {"&lt;step index&gt;": "&lt;Face.Abilities[ability_index].Line&gt;"},
+ *  "max_turn": &lt;the last turn gorge's replay reached&gt;}
  * </pre>
  *
  * The Item is read verbatim; the XMage-only fields (xmage_name,
@@ -126,6 +127,13 @@ public final class Request {
             // Overflow is invalid, not an invitation to wrap to another turn.
         }
         throw new IllegalArgumentException("invalid scenario turn " + value + " (want integer 1..100)");
+    }
+
+    /** The last turn gorge's replay of these steps reached: the "max_turn"
+     * of the request, 0 when it names none. */
+    public int maxTurn() {
+        JsonElement e = raw.get("max_turn");
+        return e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isNumber() ? e.getAsInt() : 0;
     }
 
     /** The setup object of seat i ("p0"/"p1"), or an empty object. */

@@ -156,8 +156,9 @@ public final class StepMachine {
             ph.mainLoopStep();
             // Setup must stop on the scenario turn. A step may legitimately move
             // on (pass_to a later turn, an off-turn attack, an end-the-turn
-            // resolve), but never far: gorge's own loop caps it the same way.
-            int cap = stepIdx < 0 ? targetTurn : targetTurn + TURN_SLACK;
+            // resolve), but never far past the last turn gorge reached: a game
+            // that does has parted from the steps.
+            int cap = stepIdx < 0 ? targetTurn : Math.max(targetTurn, req.maxTurn()) + TURN_SLACK;
             if (ph.getTurn() > cap) {
                 throw new HarnessError("passed turn " + cap + " at step " + stepIdx);
             }
