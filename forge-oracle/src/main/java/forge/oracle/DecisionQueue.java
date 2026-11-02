@@ -130,10 +130,19 @@ public final class DecisionQueue {
         return true;
     }
 
+    /** gorge's acknowledgement of a look ("Continue", resume look_ack): the
+     * looker clicks through a card they were shown. Forge poses no such ask, and
+     * its single "yes" label must not be read as the answer to a later yes/no
+     * (Planetarium of Wan Shi Tong's "you may cast it"), so it is neither a
+     * yes/no nor ever leftover. */
+    public static boolean isLookAck(Decision d) {
+        return d.resume.equals("look_ack");
+    }
+
     public List<Decision> unconsumed() {
         List<Decision> out = new ArrayList<>();
         for (Decision d : all) {
-            if (!d.consumed && !isPaymentWindow(d)) {
+            if (!d.consumed && !isPaymentWindow(d) && !isLookAck(d)) {
                 out.add(d);
             }
         }
@@ -178,6 +187,9 @@ public final class DecisionQueue {
     /** A yes/no answer: a trigger_optional "yesno" or a choose whose single
      * pick is a yes/no label. */
     public static boolean isYesNo(Decision d) {
+        if (isLookAck(d)) {
+            return false;
+        }
         if (d.kind.equals("yesno") || isPlayChoice(d)) {
             return true;
         }

@@ -47,6 +47,23 @@ public class DecisionQueueTest {
     static final String PAY_G = "{\"step\":0,\"seat\":0,\"kind\":\"choose_n\",\"picks\":[\"Pay G\"],\"pick_refs\":[\"p0:Head of the Homestead\"],"
             + "\"object_picks\":[\"p0:Head of the Homestead\"],\"pick_kinds\":[\"pay_G\"],\"gorge_kind\":\"choose\"}";
 
+    static final String LOOK_ACK = "{\"step\":4,\"seat\":0,\"kind\":\"choose_n\",\"options\":1,\"picks\":[\"Continue\"],"
+            + "\"pick_refs\":[\"Continue\"],\"pick_kinds\":[\"yes\"],\"resume\":\"look_ack\",\"gorge_kind\":\"choose\",\"min\":1,\"max\":1}";
+    static final String PLAY_NO = "{\"step\":4,\"seat\":0,\"kind\":\"mode\",\"options\":1,\"picks\":[],"
+            + "\"resume\":\"play\",\"gorge_kind\":\"modes\",\"min\":0,\"max\":1}";
+
+    /** A look's "Continue" carries a yes label that must not answer the "you may
+     * cast it" ask that follows (Planetarium of Wan Shi Tong), and Forge poses no
+     * ack, so it is never leftover. */
+    @Test
+    public void lookAckIsNeitherYesNoNorLeftover() {
+        DecisionQueue dq = q(LOOK_ACK, PLAY_NO);
+        Decision d = dq.take(4, DecisionQueue::isYesNo);
+        assertEquals(d.resume, "play");
+        assertFalse(DecisionQueue.yes(d));
+        assertTrue(dq.unconsumed().isEmpty());
+    }
+
     @Test
     public void takesInLogOrderWithinAStep() {
         DecisionQueue d = q(X, TARGET, TRIGGER_YES);
