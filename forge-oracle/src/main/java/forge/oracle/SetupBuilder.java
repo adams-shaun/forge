@@ -18,6 +18,7 @@ import forge.game.GameEntity;
 import forge.game.GameEntityCounterTable;
 import forge.game.card.Card;
 import forge.game.card.CardFactory;
+import forge.game.card.CounterEnumType;
 import forge.game.card.CounterType;
 import forge.game.player.Player;
 import forge.game.trigger.TriggerHandler;
@@ -88,6 +89,14 @@ final class SetupBuilder {
         th.suppressMode(TriggerType.ChangesZone);
         th.suppressMode(TriggerType.ChangesZoneAll);
         Map<Card, String> links = new LinkedHashMap<>();
+        // Life is set before anything is placed and the turn's gain and loss
+        // tallies cleared at once: gorge's setup gains and loses nothing, so a
+        // placement that asks whether a player gained or lost life this turn
+        // (an enters-with-a-counter or enters-tapped check, an infusion static)
+        // must find none.
+        for (int i = 0; i < m.seats.length; i++) {
+            setLife(m.req.seat(i), m.seats[i]);
+        }
         try {
             for (int i = 0; i < m.seats.length; i++) {
                 placeSeat(m, i, turn, links);
@@ -103,6 +112,11 @@ final class SetupBuilder {
             th.clearSuppression(TriggerType.CounterAdded);
         }
         for (Player p : m.seats) {
+            // Setup put cards into graveyards through Zone.add, which counts
+            // each permanent card as a descent; none of it happened this turn.
+            p.setDescended(0);
+            p.setLifeGainedThisTurn(0);
+            p.setLifeLostThisTurn(0);
             for (Card c : p.getCardsIn(ZoneType.Battlefield)) {
                 c.setSickness(false);
             }
@@ -114,6 +128,15 @@ final class SetupBuilder {
             }
         }
         game.getAction().checkStaticAbilities();
+    }
+
+    private static void setLife(JsonObject s, Player p) {
+        JsonElement life = s.get("life");
+        if (life != null && life.isJsonPrimitive()) {
+            p.setLife(life.getAsInt(), null);
+            p.setLifeGainedThisTurn(0);
+            p.setLifeLostThisTurn(0);
+        }
     }
 
     private static void placeSeat(StepMachine m, int i, int turn, Map<Card, String> links) {
@@ -155,9 +178,11 @@ final class SetupBuilder {
             if (containsName(backFace, n)) {
                 flipToBack(c, n);
             }
-            if (containsName(tapped, n)) {
-                c.setTapped(true);
-            }
+            // The tapped list is the whole truth: the move onto the battlefield
+            // applied an enters-tapped replacement judged on whatever had been
+            // placed so far ("unless you control a basic land"), which gorge's
+            // setup does not apply.
+            c.setTapped(containsName(tapped, n));
             Map<String, Integer> cs = counterFor(counters, n);
             if (cs != null) {
                 addCounters(m.game, p, c, cs);
@@ -221,10 +246,6 @@ final class SetupBuilder {
             }
             p.setSpeed(v);
             p.createSpeedEffect();
-        }
-        JsonElement life = s.get("life");
-        if (life != null && life.isJsonPrimitive()) {
-            p.setLife(life.getAsInt(), null);
         }
         placeTokens(m, i);
     }
@@ -394,6 +415,11 @@ final class SetupBuilder {
         }
         c.setState(CardStateName.Backside, true);
         c.setBackSide(true);
+        // A Saga placed on its front face entered with its lore counter, which
+        // the back face keeps; gorge places the back face with none.
+        if (c.getCounters(CounterEnumType.LORE) > 0) {
+            c.setCounters(CounterEnumType.LORE, 0);
+        }
     }
 
     static void addCounters(Game game, Player p, Card c, Map<String, Integer> kinds) {
