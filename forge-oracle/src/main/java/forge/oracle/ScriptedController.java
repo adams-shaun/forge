@@ -333,7 +333,16 @@ public class ScriptedController extends PlayerControllerAi {
     }
 
     @Override
+    public CardCollectionView cheatShuffle(CardCollectionView list) {
+        return m.forcedShuffle(seat, list);
+    }
+
+    @Override
     public boolean chooseBinary(SpellAbility sa, String question, BinaryChoiceType kindOfChoice, Boolean defaultChoice) {
+        // The recorded flip's outcome is forced as the call being right or wrong.
+        if (kindOfChoice == BinaryChoiceType.HeadsOrTails && !m.req.forcedFlips().isEmpty()) {
+            return true;
+        }
         m.miss("binary", question);
         return super.chooseBinary(sa, question, kindOfChoice, defaultChoice);
     }

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package forge.oracle;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +27,8 @@ import forge.game.GameType;
 import forge.game.Match;
 import forge.game.ability.AbilityFactory;
 import forge.game.card.Card;
+import forge.game.card.CardCollection;
+import forge.game.card.CardCollectionView;
 import forge.game.mana.Mana;
 import forge.game.phase.PhaseHandler;
 import forge.game.phase.PhaseType;
@@ -67,6 +71,7 @@ public final class StepMachine {
     final DecisionQueue dq;
     final RefTable refs = new RefTable();
     final JsonArray steps;
+    final List<ArrayDeque<List<String>>> forcedShuffles = new ArrayList<>();
     final int targetTurn;
     Game game;
     final Player[] seats = new Player[2];
@@ -87,6 +92,9 @@ public final class StepMachine {
         this.dq = new DecisionQueue(req.decisions);
         this.steps = req.steps();
         this.targetTurn = req.turn();
+        for (int i = 0; i < 2; i++) {
+            forcedShuffles.add(new ArrayDeque<>(req.forcedShuffles(i)));
+        }
     }
 
     public boolean strict() {
@@ -176,6 +184,34 @@ public final class StepMachine {
         if (!done) {
             throw new HarnessError("game ended at step " + stepIdx + " before every step ran");
         }
+    }
+
+    /** Seat's library after a shuffle: the order the recorded game's shuffle left
+     * it in, the next of that seat's, or Forge's own when the item names none.
+     * A library that does not hold what the recorded one held stops the game. */
+    CardCollectionView forcedShuffle(int seat, CardCollectionView shuffled) {
+        List<String> order = forcedShuffles.get(seat).poll();
+        if (order == null) {
+            return shuffled;
+        }
+        Map<Integer, Card> byId = new HashMap<>();
+        for (Card c : shuffled) {
+            byId.put(c.getId(), c);
+        }
+        CardCollection out = new CardCollection();
+        for (String ref : order) {
+            Integer id = refs.boundId(ref);
+            Card c = id == null ? null : byId.get(id);
+            if (c == null) {
+                throw fail(new HarnessError("forced shuffle at step " + stepIdx + ": p" + seat + "'s library has no " + ref));
+            }
+            out.add(c);
+        }
+        if (out.size() != shuffled.size()) {
+            throw fail(new HarnessError("forced shuffle at step " + stepIdx + ": p" + seat + "'s library holds "
+                    + shuffled.size() + " cards, gorge's " + out.size()));
+        }
+        return out;
     }
 
     private RuntimeException fail(RuntimeException e) {

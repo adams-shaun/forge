@@ -124,6 +124,37 @@ public final class Request {
         return e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isNumber() ? e.getAsInt() : 0;
     }
 
+    /** Whether the recorded game's coin flips were won, in order: what the
+     * "forced_flips" of the item name. */
+    public List<Boolean> forcedFlips() {
+        List<Boolean> out = new ArrayList<>();
+        JsonElement e = item == null ? null : item.get("forced_flips");
+        if (e != null && e.isJsonArray()) {
+            for (JsonElement f : e.getAsJsonArray()) {
+                JsonElement w = f.getAsJsonObject().get("win");
+                out.add(w != null && w.getAsBoolean());
+            }
+        }
+        return out;
+    }
+
+    /** The recorded game's shuffles of seat i's library, in order: the refs
+     * top first, from the "forced_shuffles" of the item. */
+    public List<List<String>> forcedShuffles(int seat) {
+        List<List<String>> out = new ArrayList<>();
+        JsonElement e = item == null ? null : item.get("forced_shuffles");
+        if (e != null && e.isJsonArray()) {
+            for (JsonElement f : e.getAsJsonArray()) {
+                JsonObject o = f.getAsJsonObject();
+                JsonElement s = o.get("seat");
+                if ((s == null ? 0 : s.getAsInt()) == seat) {
+                    out.add(strings(o, "order"));
+                }
+            }
+        }
+        return out;
+    }
+
     /** The setup object of seat i ("p0"/"p1"), or an empty object. */
     public JsonObject seat(int i) {
         JsonElement s = item.get("setup");
