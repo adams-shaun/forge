@@ -73,6 +73,7 @@ public final class StepMachine {
     final List<JsonObject> snaps = new ArrayList<>();
     final List<String> notes = new ArrayList<>();
 
+    private int paymentStep = -2; // the step whose recorded spend was already applied
     int stepIdx = -1; // -1 = setup, until the scenario turn's first main-1 priority
     boolean acted;
     boolean done;
@@ -541,6 +542,18 @@ public final class StepMachine {
         actedSa = sa;
         actedHostId = c.getId();
         return Lists.newArrayList(sa);
+    }
+
+    /** The mana gorge spent at the current step, once: the first mana payment
+     * of the step takes it, so a hybrid or generic pip is paid with the colours
+     * gorge chose (CR 601.2h) and not by Forge's own order. "" when none, or
+     * already taken. */
+    String takeRecordedPayment() {
+        if (stepIdx < 0 || paymentStep == stepIdx) {
+            return "";
+        }
+        paymentStep = stepIdx;
+        return req.payment(stepIdx);
     }
 
     /** gorge activated these mana sources inside the payment window (pick
@@ -1438,6 +1451,8 @@ public final class StepMachine {
         if (d != null) {
             List<SpellAbility> left = new ArrayList<>(sas);
             List<SpellAbility> placed = new ArrayList<>();
+            List<String> refs = d.refs();
+            int pickIdx = 0;
             for (String label : d.picks) {
                 SpellAbility best = null;
                 int bestScore = -1;
@@ -1452,6 +1467,14 @@ public final class StepMachine {
                         tie = true;
                     }
                 }
+                if (tie && bestScore >= 4 && pickIdx < refs.size()) {
+                    SpellAbility byHost = bySource(refs.get(pickIdx), label, left, bestScore);
+                    if (byHost != null) {
+                        best = byHost;
+                        tie = false;
+                    }
+                }
+                pickIdx++;
                 if (best == null || bestScore < 4 || (tie && !sameEffect(left))) {
                     miss("trigger order", "gorge trigger \"" + label + "\" binds no unique Forge trigger");
                     return null;
@@ -1468,6 +1491,29 @@ public final class StepMachine {
         }
         miss("trigger order", sas.size() + " simultaneous triggers");
         return null;
+    }
+
+    /** Among the triggers that tie on the label, the one whose source is the
+     * object gorge's pick names (two tokens with one Prowess trigger differ in
+     * counters, so which goes on the stack first is observable). Null when the
+     * ref names no card, or no tied trigger or more than one comes from it. */
+    private SpellAbility bySource(String ref, String label, List<SpellAbility> left, int score) {
+        Card src;
+        try {
+            src = card(ref);
+        } catch (HarnessError e) {
+            return null;
+        }
+        SpellAbility found = null;
+        for (SpellAbility sa : left) {
+            if (triggerScore(label, sa) == score && sa.getHostCard() != null && sa.getHostCard().getId() == src.getId()) {
+                if (found != null) {
+                    return null;
+                }
+                found = sa;
+            }
+        }
+        return found;
     }
 
     private static boolean sameEffect(List<SpellAbility> sas) {
