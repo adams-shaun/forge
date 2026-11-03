@@ -388,8 +388,22 @@ final class SetupBuilder {
             moved = c;
         }
         moved.setTapped(false);
+        // gorge's placement re-runs a printed K:etbCounter and keeps what it
+        // grants (the scenario states only the counters beyond it), so those
+        // kinds stay.
+        java.util.Set<String> printed = new java.util.HashSet<>();
+        for (forge.game.keyword.KeywordInterface k : moved.getKeywords()) {
+            String kw = k.getOriginal();
+            if (kw != null && kw.startsWith("etbCounter:")) {
+                String[] parts = kw.split(":");
+                if (parts.length > 1) {
+                    printed.add(parts[1].toUpperCase(java.util.Locale.ROOT));
+                }
+            }
+        }
         for (CounterType t : new ArrayList<>(moved.getCounters().elementSet())) {
             boolean entry = t.is(CounterEnumType.LOYALTY) || t.is(CounterEnumType.DEFENSE)
+                    || printed.contains(t.toString().toUpperCase(java.util.Locale.ROOT))
                     || (t.is(CounterEnumType.LORE) && !saga);
             if (!entry) {
                 moved.setCounters(t, 0);
