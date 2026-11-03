@@ -112,6 +112,13 @@ final class SetupBuilder {
                 p.getZone(z).resetCardsAddedThisTurn();
                 p.getZone(z).resetCardsAddedThisTurn();
             }
+            // Setup states the board; it is not events of the scenario turn.
+            // Zone.add counted each setup graveyard permanent as descent, and
+            // setLife counted the life field as gained or lost this turn.
+            p.setDescended(0);
+            p.setLifeGainedThisTurn(0);
+            p.setLifeLostThisTurn(0);
+            p.setLifeStartedThisTurnWith(p.getLife());
         }
         game.getAction().checkStaticAbilities();
     }
@@ -408,7 +415,9 @@ final class SetupBuilder {
             }
             c.addCounter(t, e.getValue(), p, table);
         }
-        table.replaceCounterEffect(game, null, false, false, null);
+        // etb: the counters are the board as stated, so no AddCounter
+        // replacement (Doc Samson's +1, a doubler) applies; the triggers stay.
+        table.replaceCounterEffect(game, null, false, true, null);
         table.triggerCountersPutAll(game);
     }
 
