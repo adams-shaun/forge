@@ -18,6 +18,7 @@ import forge.game.GameEntity;
 import forge.game.GameEntityCounterTable;
 import forge.game.card.Card;
 import forge.game.card.CardFactory;
+import forge.game.card.CounterEnumType;
 import forge.game.card.CounterType;
 import forge.game.player.Player;
 import forge.game.trigger.TriggerHandler;
@@ -46,6 +47,10 @@ import forge.item.PaperToken;
  *     (P0-REPORT: suppressing all triggers would drop them). The active
  *     player is set before placement, because Forge's TriggerHandler runs no
  *     trigger while there is no active player.</li>
+ * <li>Placement is a restatement of the board, so entry replacements do not
+ *     apply: a permanent does not enter tapped and takes no entry counter
+ *     but the ones gorge's MoveZone grants (loyalty, a front-face Saga's lore,
+ *     defense); the scenario's own tapped and counters fields state the rest.</li>
  * <li>Then, per placement as gorge emits them: back face, tapped, setup
  *     counters (through the counter table, triggers live), speed, life.</li>
  * <li>Setup {@code tokens} (forge-gui res/tokenscripts stems) are minted at the
@@ -156,7 +161,7 @@ final class SetupBuilder {
                 p.getZone(ZoneType.Battlefield).add(c);
                 links.put(c, auraHost.get(occurrence));
             } else {
-                putOntoBattlefield(m.game, p, c, containsName(backFace, n));
+                c = putOntoBattlefield(m.game, p, c, containsName(backFace, n));
             }
             unlockNamedDoor(m.game, p, c, n);
             if (containsName(backFace, n)) {
@@ -349,25 +354,48 @@ final class SetupBuilder {
         return -1;
     }
 
-    /** Hand first, then a real move to the battlefield, so ETB replacement
-     * effects (enters tapped, as-enters choices, entry counters) apply as
-     * gorge's MoveZone applies them. A Saga's own chapter trigger is held off. */
-    static void putOntoBattlefield(Game game, Player p, Card c, boolean backFace) {
+    /** Hand first, then a real move to the battlefield, so the entry counters
+     * gorge's MoveZone grants (a planeswalker's loyalty, a Saga's lore, a
+     * Battle's defense) are granted and their CounterAdded triggers fire. Setup
+     * is a restatement of the board, not an entry, so every other
+     * enters-the-battlefield effect is undone: a replacement that enters the
+     * permanent tapped, any other entry counter (the scenario's own tapped and
+     * counters fields state those), and, for a back-face placement, the Saga
+     * lore counter (the permanent stands on a face with no chapters). Returns
+     * the permanent on the battlefield, which may be a new object. */
+    static Card putOntoBattlefield(Game game, Player p, Card c, boolean backFace) {
         p.getZone(ZoneType.Hand).add(c);
         // gorge f788f3c31: a front-face Saga keeps its entry chapter I trigger
         // (XMage's addCard adds the lore counter and chapter I fires); only a
         // back-face placement, a permanent with no chapter abilities, drops it.
         boolean saga = backFace && c.getType().hasSubtype("Saga");
+        TriggerHandler th = game.getTriggerHandler();
         if (saga) {
-            game.getTriggerHandler().suppressMode(TriggerType.CounterAdded);
+            th.suppressMode(TriggerType.CounterAdded);
         }
+        // A tap an entry replacement applies is not an event of the scenario.
+        th.suppressMode(TriggerType.Taps);
+        Card moved;
         try {
-            game.getAction().moveTo(ZoneType.Battlefield, c, null, null);
+            moved = game.getAction().moveTo(ZoneType.Battlefield, c, null, null);
         } finally {
+            th.clearSuppression(TriggerType.Taps);
             if (saga) {
-                game.getTriggerHandler().clearSuppression(TriggerType.CounterAdded);
+                th.clearSuppression(TriggerType.CounterAdded);
             }
         }
+        if (moved == null || !moved.isInPlay()) {
+            moved = c;
+        }
+        moved.setTapped(false);
+        for (CounterType t : new ArrayList<>(moved.getCounters().elementSet())) {
+            boolean entry = t.is(CounterEnumType.LOYALTY) || t.is(CounterEnumType.DEFENSE)
+                    || (t.is(CounterEnumType.LORE) && !saga);
+            if (!entry) {
+                moved.setCounters(t, 0);
+            }
+        }
+        return moved;
     }
 
     /** A Room named by one door's name stands with that door unlocked, as
