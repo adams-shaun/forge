@@ -527,8 +527,14 @@ public class ScriptedController extends PlayerControllerAi {
         // An optional keyword cost (offspring, multikicker, ...): gorge logs a
         // decision only when it pays one, so with none logged it paid none.
         Integer n = m.chooseNumber(seat, 0, max);
-        m.note("keyword cost " + keyword + ": " + (n == null ? 0 : n) + (n == null ? " (gorge logged none)" : ""));
-        return n == null ? 0 : n;
+        if (n == null) {
+            // No decision: the cast step's cast_mode may elect the keyword.
+            n = m.modeKeywordCost(keyword, max);
+            m.note("keyword cost " + keyword + ": " + n + (n == 0 ? " (gorge logged none)" : " (cast_mode " + m.castMode + ")"));
+            return n;
+        }
+        m.note("keyword cost " + keyword + ": " + n);
+        return n;
     }
 
     @Override

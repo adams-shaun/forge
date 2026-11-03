@@ -77,6 +77,8 @@ public final class StepMachine {
     boolean acted;
     boolean done;
     SpellAbility actedSa;
+    /** The acting cast step's cast_mode ("" for the ordinary cast). */
+    String castMode = "";
     int actedHostId;
     List<String> stepTargets = new ArrayList<>();
     RuntimeException failure;
@@ -511,6 +513,7 @@ public final class StepMachine {
         stepIdx++;
         acted = false;
         actedSa = null;
+        castMode = "";
         stepTargets = new ArrayList<>();
     }
 
@@ -526,7 +529,10 @@ public final class StepMachine {
         }
         SpellAbility sa;
         switch (op) {
-            case "cast": sa = spellFor(c, st); break;
+            case "cast":
+                castMode = Request.str(st, "cast_mode");
+                sa = spellFor(c, st, p);
+                break;
             case "play": sa = landFor(c, st); break;
             default: sa = abilityFor(c); break;
         }
@@ -575,6 +581,14 @@ public final class StepMachine {
             return;
         }
         if (actedSa.isManaAbility()) {
+            return;
+        }
+        if (actedSa.isPlotting()) {
+            // A plot is a special action (CR 116.2k): it uses no stack, the card is exiled plotted.
+            Card pc = game.findById(actedHostId);
+            if (pc == null || !pc.isPlotted()) {
+                throw new HarnessError("step " + stepIdx + " (plot) " + Request.str(st, "card") + " was not plotted");
+            }
             return;
         }
         boolean wantSpell = op.equals("cast");
@@ -634,7 +648,12 @@ public final class StepMachine {
         return out;
     }
 
-    private SpellAbility spellFor(Card c, JsonObject st) {
+    private SpellAbility spellFor(Card c, JsonObject st, Player p) {
+        SpellAbility byMode = spellForMode(c, p, castMode);
+        if (byMode != null) {
+            note("cast: cast_mode " + castMode + " took " + byMode);
+            return byMode;
+        }
         List<SpellAbility> spells = new ArrayList<>(c.getSpells());
         if (spells.isEmpty()) {
             throw new HarnessError(Request.str(st, "card") + " has no spell ability");
@@ -643,6 +662,70 @@ public final class StepMachine {
             note("cast: " + spells.size() + " spell abilities on " + c.getName() + "; took the first: " + spells.get(0));
         }
         return spells.get(0);
+    }
+
+    /** The spell ability a cast step's cast_mode names, or null when the mode
+     * is the ordinary cast or an optional cost (kicker, offspring, ... are
+     * paid through chooseOptionalCosts and modeKeywordCost). Forge lists the
+     * alternatives among Card.getAllPossibleAbilities: an Adventure or Omen
+     * half, a modal back face, a warp cast, and the plot special action. A
+     * named mode Forge cannot offer is a harness row, not a different cast. */
+    private SpellAbility spellForMode(Card c, Player p, String mode) {
+        if (mode.isEmpty()) {
+            return null;
+        }
+        if (mode.equals("plot")) {
+            for (SpellAbility sa : c.getSpellAbilities()) {
+                if (sa.isPlotting()) {
+                    return sa;
+                }
+            }
+            throw new HarnessError("cast_mode plot: " + c.getName() + " has no plot ability");
+        }
+        java.util.function.Predicate<SpellAbility> want;
+        switch (mode) {
+            case "adventure_alt": want = sa -> sa.isSpell() && sa.isAdventure(); break;
+            case "omen_alt": want = sa -> sa.isSpell() && sa.isOmen(); break;
+            case "modal_spell": want = sa -> sa.isSpell() && sa.getCardStateName() == forge.card.CardStateName.Backside; break;
+            case "warped": want = sa -> sa.isSpell() && sa.isWarp(); break;
+            default: return null;
+        }
+        for (SpellAbility sa : c.getAllPossibleAbilities(p, false)) {
+            if (want.test(sa)) {
+                return sa;
+            }
+        }
+        throw new HarnessError("cast_mode " + mode + ": " + c.getName() + " offers no such cast in Forge");
+    }
+
+    /** Whether cast_mode elects this optional cost (kicker, buyback, entwine). */
+    static boolean modeElects(String mode, OptionalCostValue v) {
+        String t = v.getType().name();
+        switch (mode) {
+            case "kicked": return t.startsWith("Kicker");
+            case "kicked1": return t.equals("Kicker1");
+            case "kicked2": return t.equals("Kicker2");
+            case "kickedboth": return t.startsWith("Kicker");
+            case "buyback": return t.equals("Buyback");
+            case "entwined": return t.equals("Entwine");
+            default: return false;
+        }
+    }
+
+    /** How many times cast_mode pays the optional keyword cost kw (offspring,
+     * replicate, multikicker): once, when the mode names that keyword. */
+    static int modeKeywordTimes(String mode, String kw) {
+        switch (mode) {
+            case "offspring": return kw.equals("OFFSPRING") ? 1 : 0;
+            case "replicated": return kw.equals("REPLICATE") ? 1 : 0;
+            case "multikicked": return kw.equals("MULTIKICKER") ? 1 : 0;
+            default: return 0;
+        }
+    }
+
+    int modeKeywordCost(forge.game.keyword.KeywordInterface ki, int max) {
+        String kw = ki.getKeyword() == null ? "" : ki.getKeyword().name();
+        return Math.min(max, modeKeywordTimes(castMode, kw));
     }
 
     private SpellAbility landFor(Card c, JsonObject st) {
@@ -1196,6 +1279,16 @@ public final class StepMachine {
             }
             note("optional cost step " + stepIdx + ": paid " + out);
             return out;
+        }
+        List<OptionalCostValue> elected = new ArrayList<>();
+        for (OptionalCostValue v : values) {
+            if (modeElects(castMode, v)) {
+                elected.add(v);
+            }
+        }
+        if (!elected.isEmpty()) {
+            note("optional cost step " + stepIdx + ": cast_mode " + castMode + " paid " + elected);
+            return elected;
         }
         note("optional cost step " + stepIdx + ": none of " + values + " (gorge logged none)");
         return new ArrayList<>();
