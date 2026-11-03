@@ -394,6 +394,22 @@ public class ScriptedController extends PlayerControllerAi {
     public boolean applyManaToCost(ManaCostBeingPaid toPay, SpellAbility ability, String prompt, ManaConversionMatrix matrix, boolean effect) {
         ManaPool pool = player.getManaPool();
         int before = pool.totalMana();
+        // the spend gorge recorded for this step, in its order, before Forge's
+        // own pass picks which units pay a hybrid or generic pip
+        for (char c : m.takeRecordedPayment().toCharArray()) {
+            byte color = switch (c) {
+                case 'W' -> ManaAtom.WHITE;
+                case 'U' -> ManaAtom.BLUE;
+                case 'B' -> ManaAtom.BLACK;
+                case 'R' -> ManaAtom.RED;
+                case 'G' -> ManaAtom.GREEN;
+                case 'C' -> ManaAtom.COLORLESS;
+                default -> 0;
+            };
+            if (color != 0 && !toPay.isPaid()) {
+                pool.tryPayCostWithColor(color, ability, toPay, ability.getPayingMana());
+            }
+        }
         pool.payManaCostFromPool(toPay, ability, false, ability.getPayingMana());
         while (!toPay.isPaid() && !pool.isEmpty()) {
             boolean found = false;

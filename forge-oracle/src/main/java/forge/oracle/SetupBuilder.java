@@ -429,6 +429,14 @@ final class SetupBuilder {
         }
         c.setState(CardStateName.Backside, true);
         c.setBackSide(true);
+        // gorge enters a back face that is a Saga with chapters (a Summon) with
+        // its lore counter, as a front-face Saga enters; the placement here ran
+        // on the front face, so the counter is stated now. No trigger: setup
+        // restates the board.
+        if (c.getType().hasSubtype("Saga") && c.getTriggers().stream().anyMatch(t -> t.hasParam("Chapter"))
+                && c.getCounters(CounterEnumType.LORE) == 0) {
+            c.setCounters(CounterEnumType.LORE, 1);
+        }
     }
 
     static void addCounters(Game game, Player p, Card c, Map<String, Integer> kinds) {
