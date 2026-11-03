@@ -119,6 +119,9 @@ public final class DecisionQueue {
      * "activate"). Forge pays from the pool and poses neither, so they are
      * never leftover. */
     public static boolean isPaymentWindow(Decision d) {
+        if (isLookAck(d)) {
+            return true;
+        }
         if (d.pickKinds.isEmpty()) {
             return false;
         }
@@ -175,9 +178,19 @@ public final class DecisionQueue {
         return m.matches() ? Integer.valueOf(m.group(1)) : null;
     }
 
+    /** gorge's "Continue" after it shows a player a revealed or looked-at card
+     * (resume look_ack): an acknowledgment, which Forge never asks. It is not
+     * a yes/no answer, and it must not be taken for the ask that follows it. */
+    public static boolean isLookAck(Decision d) {
+        return d.resume.equals("look_ack");
+    }
+
     /** A yes/no answer: a trigger_optional "yesno" or a choose whose single
      * pick is a yes/no label. */
     public static boolean isYesNo(Decision d) {
+        if (isLookAck(d)) {
+            return false;
+        }
         if (d.kind.equals("yesno") || isPlayChoice(d)) {
             return true;
         }

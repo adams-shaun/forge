@@ -134,4 +134,32 @@ public class DecisionQueueTest {
         assertEquals(d.unconsumed().size(), 1);
         assertTrue(d.leftover().contains("choose_n[x]"), d.leftover());
     }
+
+    /** A "Continue" after a look is gorge's acknowledgment, which Forge never
+     * asks: it is not a yes/no answer and is never left over, so the play
+     * choice that follows it at the same step is the one a yes/no takes. */
+    @Test
+    public void lookAckIsNotTakenForTheAskAfterIt() {
+        DecisionQueue d = q(
+                "{\"step\":15,\"seat\":0,\"kind\":\"choose_n\",\"picks\":[\"Continue\"],\"pick_kinds\":[\"yes\"],"
+                        + "\"resume\":\"look_ack\",\"gorge_kind\":\"choose\",\"min\":1,\"max\":1}",
+                "{\"step\":15,\"seat\":0,\"kind\":\"mode\",\"picks\":[],\"resume\":\"play\",\"gorge_kind\":\"modes\",\"min\":0,\"max\":1}");
+        Decision ack = d.all().get(0);
+        assertFalse(DecisionQueue.isYesNo(ack));
+        assertTrue(DecisionQueue.isPaymentWindow(ack));
+        Decision taken = d.take(15, DecisionQueue::isYesNo);
+        assertEquals(taken.kind, "mode");
+        assertFalse(DecisionQueue.yes(taken), "an empty answer to a play choice declines it");
+        assertNull(d.leftover());
+    }
+
+    /** The mana gorge spent at a step is the item's payment array entry. */
+    @Test
+    public void requestReadsTheRecordedPayment() {
+        Request r = Request.parse("{\"id\":\"p\",\"item\":{\"id\":\"p\",\"payment\":[\"\",\"GG\"],\"steps\":[]}}");
+        assertEquals(r.payment(0), "");
+        assertEquals(r.payment(1), "GG");
+        assertEquals(r.payment(2), "", "past the array");
+        assertEquals(Request.parse("{\"id\":\"q\",\"item\":{\"id\":\"q\"}}").payment(0), "");
+    }
 }
