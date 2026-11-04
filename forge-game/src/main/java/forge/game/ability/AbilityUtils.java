@@ -2438,6 +2438,10 @@ public class AbilityUtils {
             return doXMath(player.getTurn(), expr, c, ctb);
         }
 
+        if (sq[0].equals("YourExtraTurns")) {
+            return doXMath(player.getExtraTurnsPlayed(), expr, c, ctb);
+        }
+
         if (sq[0].equals("NotedNumber")) {
             return doXMath(player.getNotedNumberForName(c.getName()), expr, c, ctb);
         }
@@ -3260,7 +3264,7 @@ public class AbilityUtils {
             return num;
         }
 
-        final String[] s = operators.split("\\.");
+        final String[] s = operators.split("\\.", 2);
         int secondaryNum = 0;
 
         try {
