@@ -365,6 +365,15 @@ public class ScriptedController extends PlayerControllerAi {
             m.note("unless-pay step " + m.step() + ": " + d.picks.get(0) + (pay ? " paid=" + paid : ""));
             return paid;
         }
+        if (m.step() < 0) {
+            // Setup placement (before the scenario's first step) restates the
+            // board; a shock land's "you may pay 2 life" entry replacement is
+            // answered by paying, as gorge's setup drive answers an unscripted
+            // unless-pay with its first option. Nothing is spent: the
+            // scenario's tapped and life fields state the board.
+            m.note("unless-pay at setup: paid " + cost.toSimpleString());
+            return true;
+        }
         m.miss("unless-pay", cost.toSimpleString() + " for " + sa);
         return super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers);
     }
