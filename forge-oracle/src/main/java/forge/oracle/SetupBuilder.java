@@ -111,20 +111,17 @@ final class SetupBuilder {
             for (Card c : p.getCardsIn(ZoneType.Battlefield)) {
                 c.setSickness(false);
             }
-            // Setup permanents were present before turn 1: clear the
-            // entered-this-turn (and -last-turn) provenance placement recorded.
-            for (ZoneType z : new ZoneType[] {ZoneType.Battlefield, ZoneType.Hand, ZoneType.Graveyard, ZoneType.Library, ZoneType.Exile}) {
-                p.getZone(z).resetCardsAddedThisTurn();
-                p.getZone(z).resetCardsAddedThisTurn();
-            }
-            // Setup states the board; it is not events of the scenario turn.
-            // Zone.add counted each setup graveyard permanent as descent, and
-            // setLife counted the life field as gained or lost this turn.
-            p.setDescended(0);
-            p.setLifeGainedThisTurn(0);
-            p.setLifeLostThisTurn(0);
-            p.setLifeStartedThisTurnWith(p.getLife());
         }
+        // Setup restates the board as it stood before the scenario turn; it is
+        // not events of that turn. Run Forge's own end-of-turn bookkeeping
+        // (Game.onCleanupPhase drains it into Player/Card.onCleanupPhase) so
+        // every per-turn history starts empty exactly as a real game leaves
+        // it: counters put (Lasting Tarfire's X), life gained and how many
+        // times (the "first time each turn" triggers), zone changes, damage,
+        // activations -- and whatever cleanup grows to cover next. Resetting
+        // the fields by hand missed lifeGainedTimesThisTurn,
+        // lifeGainedByTeamThisTurn and countersAddedThisTurn.
+        game.onCleanupPhase();
         game.getAction().checkStaticAbilities();
     }
 
