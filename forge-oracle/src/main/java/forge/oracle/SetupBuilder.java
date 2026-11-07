@@ -121,6 +121,18 @@ final class SetupBuilder {
         // activations -- and whatever cleanup grows to cover next. Resetting
         // the fields by hand missed lifeGainedTimesThisTurn,
         // lifeGainedByTeamThisTurn and countersAddedThisTurn.
+        //
+        // The first pass also rolls setup events into the *last*-turn
+        // mirrors: Player.onCleanupPhase copies lifeLostThisTurn to
+        // lifeLostLastTurn, and Card.onCleanupPhase copies this turn's
+        // damage received to last turn's. Setup life below 20 goes through
+        // loseLife, so one pass made it "life lost last turn" for First
+        // Response, Paladin of Atonement and Feast on the Fallen. A second
+        // pass, with this turn's history now empty, overwrites those mirrors
+        // with empty too. Both passes are Forge's own cleanup, so this keeps
+        // covering every last-turn mirror cleanup grows later instead of
+        // listing the fields here.
+        game.onCleanupPhase();
         game.onCleanupPhase();
         game.getAction().checkStaticAbilities();
     }
