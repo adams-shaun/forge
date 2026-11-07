@@ -29,18 +29,24 @@ public class SetupTurnHistoryTest {
         Bootstrap.init(TestRes.res());
     }
 
-    private static final String REQUEST = "{\"abilities\":{},\"gorge_decisions\":[],"
-            + "\"id\":\"setup/turn-history\",\"item\":{\"id\":\"setup/turn-history\","
-            + "\"card\":\"\",\"template\":\"setup\",\"name\":\"setup-turn-history\","
-            + "\"setup\":{\"p0\":{\"battlefield\":[\"Lasting Tarfire\",\"Creakwood Safewright\"],"
-            + "\"life\":24},\"p1\":{\"battlefield\":[\"Grizzly Bears\"]}},\"steps\":[]}}";
+    private static String request(int life) {
+        return "{\"abilities\":{},\"gorge_decisions\":[],"
+                + "\"id\":\"setup/turn-history\",\"item\":{\"id\":\"setup/turn-history\","
+                + "\"card\":\"\",\"template\":\"setup\",\"name\":\"setup-turn-history\","
+                + "\"setup\":{\"p0\":{\"battlefield\":[\"Lasting Tarfire\",\"Creakwood Safewright\"],"
+                + "\"life\":" + life + "},\"p1\":{\"battlefield\":[\"Grizzly Bears\"]}},\"steps\":[]}}";
+    }
 
     /** Build the game and place the setup, exactly as a replay does. */
-    private static StepMachine placed() {
-        StepMachine m = new StepMachine(Request.parse(REQUEST), true);
+    private static StepMachine placed(int life) {
+        StepMachine m = new StepMachine(Request.parse(request(life)), true);
         m.build();
         SetupBuilder.place(m);
         return m;
+    }
+
+    private static StepMachine placed() {
+        return placed(24);
     }
 
     private static Card named(Player p, String name) {
@@ -64,6 +70,17 @@ public class SetupTurnHistoryTest {
         assertEquals(p0.getLifeLostThisTurn(), 0, "setup life is not life lost");
         assertEquals(p0.getLifeStartedThisTurnWith(), p0.getLife(),
                 "the turn starts with the setup life total");
+    }
+
+    @Test
+    public void placementBelowStartingLifeLeavesNoLastTurnHistory() {
+        StepMachine m = placed(18);
+        Player p0 = m.seats[0];
+
+        assertEquals(p0.getLife(), 18, "the setup life total is board state");
+        assertEquals(p0.getLifeLostThisTurn(), 0, "setup life is not life lost this turn");
+        assertEquals(p0.getLifeLostLastTurn(), 0,
+                "setup life is board state, not life lost last turn (First Response reads it)");
     }
 
     @Test
