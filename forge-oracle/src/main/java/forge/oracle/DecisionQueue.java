@@ -203,10 +203,15 @@ public final class DecisionQueue {
     /** true for yes, false for no, null when the label is neither. */
     public static Boolean yesNoOf(String label, String pickKind) {
         String k = pickKind.toLowerCase(Locale.ROOT);
-        if (k.equals("yes") || k.equals("opening_yes") || k.equals("trigger_cost_pay") || k.equals("trigger_cost_tap")) {
+        // command_zone / leave: gorge's commander-zone ask (decision
+        // KCommanderZone, CR 903.9a/b), which Forge poses as a yes/no
+        // (the state-based return's confirmAction, the replacement's
+        // confirmReplacementEffect).
+        if (k.equals("yes") || k.equals("opening_yes") || k.equals("trigger_cost_pay") || k.equals("trigger_cost_tap")
+                || k.equals("command_zone")) {
             return Boolean.TRUE;
         }
-        if (k.equals("no") || k.equals("opening_no") || k.equals("trigger_cost_decline")) {
+        if (k.equals("no") || k.equals("opening_no") || k.equals("trigger_cost_decline") || k.equals("leave")) {
             return Boolean.FALSE;
         }
         String l = label.trim().toLowerCase(Locale.ROOT);

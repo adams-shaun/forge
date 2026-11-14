@@ -69,7 +69,7 @@ public final class StepMachine {
     final JsonArray steps;
     final int targetTurn;
     Game game;
-    final Player[] seats = new Player[2];
+    final Player[] seats;
     final List<JsonObject> snaps = new ArrayList<>();
     final List<String> notes = new ArrayList<>();
 
@@ -90,6 +90,7 @@ public final class StepMachine {
         this.dq = new DecisionQueue(req.decisions);
         this.steps = req.steps();
         this.targetTurn = req.turn();
+        this.seats = new Player[req.seatCount()];
     }
 
     public boolean strict() {
@@ -131,15 +132,31 @@ public final class StepMachine {
         return row;
     }
 
+    /** CR 903.7: each player's starting life in a Commander game. */
+    static final int COMMANDER_LIFE = 40;
+
+    /** The match: a Constructed game, or for a commander-format scenario a
+     * Commander game (GameType.Commander applied as the variant, so the
+     * commander rules run: the CR 903.9a state-based return to the command
+     * zone, the CR 903.10a 21-damage loss) with every seat at 40 life. The
+     * commanders themselves are seated by SetupBuilder from the setup. */
     void build() {
+        boolean commander = req.commander();
         List<RegisteredPlayer> players = Lists.newArrayList();
-        for (int i = 0; i < 2; i++) {
-            players.add(new RegisteredPlayer(new Deck()).setPlayer(new ScriptedLobbyPlayer("p" + i, this, i)));
+        for (int i = 0; i < seats.length; i++) {
+            RegisteredPlayer rp = new RegisteredPlayer(new Deck()).setPlayer(new ScriptedLobbyPlayer("p" + i, this, i));
+            if (commander) {
+                rp.setStartingLife(COMMANDER_LIFE);
+            }
+            players.add(rp);
         }
-        GameRules rules = new GameRules(GameType.Constructed);
+        GameRules rules = new GameRules(commander ? GameType.Commander : GameType.Constructed);
+        if (commander) {
+            rules.addAppliedVariant(GameType.Commander);
+        }
         Match match = new Match(rules, players, "oracle");
         game = new Game(players, rules, match);
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < seats.length; i++) {
             seats[i] = game.getPlayers().get(i);
         }
     }
@@ -486,6 +503,7 @@ public final class StepMachine {
             case "battlefield": to = ZoneType.Battlefield; break;
             case "graveyard": to = ZoneType.Graveyard; break;
             case "exile": to = ZoneType.Exile; break;
+            case "command": to = ZoneType.Command; break;
             default: throw new HarnessError("move: zone " + Request.str(st, "to") + " unsupported");
         }
         Card moved = game.getAction().moveTo(to, c, null, null);
@@ -667,6 +685,12 @@ public final class StepMachine {
             note("cast: cast_mode " + castMode + " took " + byMode);
             return byMode;
         }
+        if (c.isInZone(ZoneType.Command)) {
+            SpellAbility fromCommand = commandZoneSpell(c, p);
+            if (fromCommand != null) {
+                return fromCommand;
+            }
+        }
         List<SpellAbility> spells = new ArrayList<>(c.getSpells());
         if (spells.isEmpty()) {
             throw new HarnessError(Request.str(st, "card") + " has no spell ability");
@@ -675,6 +699,35 @@ public final class StepMachine {
             note("cast: " + spells.size() + " spell abilities on " + c.getName() + "; took the first: " + spells.get(0));
         }
         return spells.get(0);
+    }
+
+    /** A commander cast from the command zone (CR 903.8): the card's own spell
+     * is restricted to the hand, so Forge offers the cast as the copy the
+     * Commander Effect's MayPlay static grants (GameActionUtil's may-play
+     * alternative, zone restriction lifted). The first such copy of a basic
+     * spell is the plain cast; the commander tax is Forge's cost adjustment
+     * on it. null when Forge grants no such cast (not a commander, or the
+     * card cannot be cast now), so the caller falls back to the plain spell
+     * and the step fails as Forge refuses it. */
+    private SpellAbility commandZoneSpell(Card c, Player p) {
+        game.getAction().checkStaticAbilities();
+        SpellAbility alt = null;
+        for (SpellAbility sa : c.getAllPossibleAbilities(p, false)) {
+            if (!sa.isSpell() || sa.getMayPlay() == null) {
+                continue;
+            }
+            if (sa.isBasicSpell() && sa.getCardStateName() != forge.card.CardStateName.Backside) {
+                note("cast: from the command zone by " + sa.getMayPlay().getHostCard());
+                return sa;
+            }
+            if (alt == null) {
+                alt = sa;
+            }
+        }
+        if (alt != null) {
+            note("cast: from the command zone, no basic spell; took " + alt);
+        }
+        return alt;
     }
 
     /** The spell ability a cast step's cast_mode names, or null when the mode
@@ -703,8 +756,11 @@ public final class StepMachine {
             case "warped": want = sa -> sa.isSpell() && sa.isWarp(); break;
             default: return null;
         }
+        // From the command zone only the Commander Effect's may-play copy can
+        // be cast (the printed spell is restricted to the hand).
+        boolean fromCommand = c.isInZone(ZoneType.Command);
         for (SpellAbility sa : c.getAllPossibleAbilities(p, false)) {
-            if (want.test(sa)) {
+            if (want.test(sa) && (!fromCommand || sa.getMayPlay() != null)) {
                 return sa;
             }
         }

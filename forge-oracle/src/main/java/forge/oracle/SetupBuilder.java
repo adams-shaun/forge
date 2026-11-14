@@ -72,6 +72,21 @@ import forge.item.PaperToken;
  *     priority of the scenario turn (StepMachine, after its untap step, which
  *     would otherwise untap them): gorge taps them after the turn's untap step
  *     and drops every trigger the taps queue (CR 502.3).</li>
+ * <li>Commander (a {@code "format": "commander"} scenario, CR 903; gorge's
+ *     oracleSeat Command, Commanders, CommanderCasts, CommanderDamage): a
+ *     seat's {@code command} cards are created after its exile cards and
+ *     before library_top (gorge's placement order), put straight into the
+ *     command zone and seated as its commanders, which creates the Commander
+ *     Effect (castable from there, the CR 903.9b replacement). A
+ *     {@code commanders} entry names one of the seat's other placements, which
+ *     stays where it is placed but is a commander too (gorge seats it in the
+ *     command zone at genesis and moves it out; the move is placement, not a
+ *     CR 903.9a arrival). {@code commander_casts} seeds the tax count (CR
+ *     903.8) and {@code commander_damage} the combat damage taken from a
+ *     commander, keyed by its full "pN:Name" ref (CR 903.10a), after every
+ *     seat is placed. In a constructed scenario the {@code command} cards go
+ *     to the command zone with no commander status, as gorge's runner puts
+ *     them, and the other three fields are harness errors.</li>
  * <li>Library: the XMage driver's layout, top first: library_top, the filler
  *     (40 - named cards, at least turn/2+1 after turn 1), then the named
  *     library cards. gorge's own library order comes from its genesis deal,
@@ -101,6 +116,12 @@ final class SetupBuilder {
             // seats and their tokens.
             for (Map.Entry<Card, String> e : links.entrySet()) {
                 linkAttached(m, e.getKey(), e.getValue());
+            }
+            // Commander damage keys are full refs, possibly to a later seat's
+            // commander, so they bind once every seat is placed (gorge's
+            // placeCommanderDamage runs after placeAttached).
+            for (int i = 0; i < m.seats.length; i++) {
+                placeCommanderDamage(m, i);
             }
         } finally {
             th.clearSuppression(TriggerType.ChangesZone);
@@ -140,9 +161,13 @@ final class SetupBuilder {
     private static void placeSeat(StepMachine m, int i, int turn, Map<Card, String> links) {
         JsonObject s = m.req.seat(i);
         Player p = m.seats[i];
-        if (s.has("command") && !Request.strings(s, "command").isEmpty()) {
-            throw new HarnessError("command zone setup unsupported");
-        }
+        boolean commander = m.req.commander();
+        validateCommanders(s, i, commander);
+        List<String> listed = Request.strings(s, "commanders");
+        // This seat's commanders in placement order (gorge's Config.Commanders
+        // order): a commanders entry where it is placed, a command card at its
+        // command placement.
+        List<Card> seated = new ArrayList<>();
         List<String> bf = Request.strings(s, "battlefield");
         List<String> backFace = Request.strings(s, "back_face");
         List<String> tapped = Request.strings(s, "tapped");
@@ -183,6 +208,9 @@ final class SetupBuilder {
             if (cs != null) {
                 addCounters(m.game, p, c, cs);
             }
+            if (containsName(listed, n)) {
+                seated.add(c);
+            }
             named++;
         }
         // hand, graveyard (zone order = setup order, oldest first), library, exile
@@ -190,12 +218,18 @@ final class SetupBuilder {
             Card c = create(m, n, p);
             m.refs.bind(i, n, c.getId());
             p.getZone(ZoneType.Hand).add(c);
+            if (containsName(listed, n)) {
+                seated.add(c);
+            }
             named++;
         }
         for (String n : Request.strings(s, "graveyard")) {
             Card c = create(m, n, p);
             m.refs.bind(i, n, c.getId());
             p.getZone(ZoneType.Graveyard).add(c);
+            if (containsName(listed, n)) {
+                seated.add(c);
+            }
             named++;
         }
         List<Card> libNamed = new ArrayList<>();
@@ -203,12 +237,28 @@ final class SetupBuilder {
             Card c = create(m, n, p);
             m.refs.bind(i, n, c.getId());
             libNamed.add(c);
+            if (containsName(listed, n)) {
+                seated.add(c);
+            }
             named++;
         }
         for (String n : Request.strings(s, "exile")) {
             Card c = create(m, n, p);
             m.refs.bind(i, n, c.getId());
             p.getZone(ZoneType.Exile).add(c);
+            if (containsName(listed, n)) {
+                seated.add(c);
+            }
+            named++;
+        }
+        // command: after exile, before library_top (gorge's placement order).
+        for (String n : Request.strings(s, "command")) {
+            Card c = create(m, n, p);
+            m.refs.bind(i, n, c.getId());
+            p.getZone(ZoneType.Command).add(c);
+            if (commander) {
+                seated.add(c);
+            }
             named++;
         }
         List<Card> top = new ArrayList<>();
@@ -216,6 +266,9 @@ final class SetupBuilder {
             Card c = create(m, n, p);
             m.refs.bind(i, n, c.getId());
             top.add(c);
+            if (containsName(listed, n)) {
+                seated.add(c);
+            }
             named++;
         }
         int filler = Math.max(0, DECK - named);
@@ -243,11 +296,137 @@ final class SetupBuilder {
             p.setSpeed(v);
             p.createSpeedEffect();
         }
+        seatCommanders(p, i, seated, Request.counts(s, "commander_casts"));
         JsonElement life = s.get("life");
         if (life != null && life.isJsonPrimitive()) {
             p.setLife(life.getAsInt(), null);
         }
         placeTokens(m, i);
+    }
+
+    /** CR 903.3c: a commander deck has one commander or a partner pair. */
+    static final int MAX_COMMANDERS = 2;
+    /** CR 704.6c: 21 combat damage from one commander loses at the first
+     * state-based check, so no setup stands on more than 20. */
+    static final int MAX_COMMANDER_DAMAGE = 20;
+
+    /** gorge's validateSetupCommanders: the Commander fields a seat may carry,
+     * checked before any card is created so a typo fails loudly. */
+    static void validateCommanders(JsonObject s, int i, boolean commander) {
+        List<String> listed = Request.strings(s, "commanders");
+        Map<String, Integer> casts = Request.counts(s, "commander_casts");
+        Map<String, Integer> damage = Request.counts(s, "commander_damage");
+        if (!commander) {
+            if (!listed.isEmpty()) {
+                throw new HarnessError("setup: p" + i + " commanders needs a commander-format scenario");
+            }
+            if (!casts.isEmpty()) {
+                throw new HarnessError("setup: p" + i + " commander_casts needs a commander-format scenario");
+            }
+            if (!damage.isEmpty()) {
+                throw new HarnessError("setup: p" + i + " commander_damage needs a commander-format scenario");
+            }
+            return;
+        }
+        List<String> command = Request.strings(s, "command");
+        List<String> seen = new ArrayList<>();
+        for (String n : listed) {
+            if (n.trim().isEmpty()) {
+                throw new HarnessError("setup: p" + i + " commanders has an empty name");
+            }
+            if (containsName(seen, n)) {
+                throw new HarnessError("setup: p" + i + " commanders lists \"" + n + "\" more than once");
+            }
+            seen.add(n);
+            if (containsName(command, n)) {
+                throw new HarnessError("setup: p" + i + " commanders names \"" + n + "\", which is already a command placement");
+            }
+            int placed = 0;
+            for (String zone : new String[] {"battlefield", "hand", "graveyard", "library", "library_top", "exile"}) {
+                for (String x : Request.strings(s, zone)) {
+                    if (x.equalsIgnoreCase(n)) {
+                        placed++;
+                    }
+                }
+            }
+            if (placed == 0) {
+                throw new HarnessError("setup: p" + i + " commanders names \"" + n + "\", which is not one of its placements");
+            }
+            if (placed > 1) {
+                throw new HarnessError("setup: p" + i + " commanders names \"" + n + "\", which is placed more than once");
+            }
+        }
+        if (command.size() + listed.size() > MAX_COMMANDERS) {
+            throw new HarnessError("setup: p" + i + " has " + (command.size() + listed.size())
+                    + " commanders (want at most " + MAX_COMMANDERS + "; CR 903.3c)");
+        }
+        for (Map.Entry<String, Integer> e : casts.entrySet()) {
+            if (e.getValue() < 1) {
+                throw new HarnessError("setup: p" + i + " commander_casts \"" + e.getKey() + "\" = " + e.getValue() + " (want at least 1; CR 903.8)");
+            }
+            if (!containsName(command, e.getKey()) && !containsName(listed, e.getKey())) {
+                throw new HarnessError("setup: p" + i + " commander_casts names \"" + e.getKey() + "\", which is not one of its commanders");
+            }
+        }
+        for (Map.Entry<String, Integer> e : damage.entrySet()) {
+            if (e.getValue() < 1 || e.getValue() > MAX_COMMANDER_DAMAGE) {
+                throw new HarnessError("setup: p" + i + " commander_damage \"" + e.getKey() + "\" = " + e.getValue()
+                        + " (want 1.." + MAX_COMMANDER_DAMAGE + "; CR 903.10a)");
+            }
+        }
+    }
+
+    /** Seats a seat's commanders, in placement order, and seeds each one's
+     * tax count (commander_casts, by front-face name). addCommander creates the
+     * seat's Commander Effect in its command zone on the first one. */
+    private static void seatCommanders(Player p, int i, List<Card> seated, Map<String, Integer> casts) {
+        for (Card c : seated) {
+            p.addCommander(c);
+        }
+        for (Map.Entry<String, Integer> e : casts.entrySet()) {
+            Card cmd = null;
+            for (Card c : seated) {
+                if (frontFaceName(c).equalsIgnoreCase(e.getKey()) || c.getName().equalsIgnoreCase(e.getKey())) {
+                    cmd = c;
+                    break;
+                }
+            }
+            if (cmd == null) {
+                throw new HarnessError("setup: p" + i + " commander_casts names \"" + e.getKey() + "\", which is not one of its commanders");
+            }
+            for (int k = 0; k < e.getValue(); k++) {
+                p.incCommanderCast(cmd);
+            }
+        }
+    }
+
+    /** A seat's commander_damage: combat damage it has taken from the
+     * commander each full ref names, with no life change (CR 903.10a). */
+    private static void placeCommanderDamage(StepMachine m, int i) {
+        for (Map.Entry<String, Integer> e : Request.counts(m.req.seat(i), "commander_damage").entrySet()) {
+            GameEntity g;
+            try {
+                g = m.entity(e.getKey());
+            } catch (HarnessError err) {
+                throw new HarnessError("setup: p" + i + " commander_damage names \"" + e.getKey() + "\", which is not one of the setup's placements");
+            }
+            if (!(g instanceof Card) || !((Card) g).isRealCommander()) {
+                throw new HarnessError("setup: p" + i + " commander_damage names \"" + e.getKey() + "\", which is not a commander");
+            }
+            m.seats[i].addCommanderDamage((Card) g, e.getValue());
+        }
+    }
+
+    /** A commander's identity in the snapshot tallies: its printed front face,
+     * so a transformed or face-down commander keeps one key. */
+    static String frontFaceName(Card c) {
+        if (c.hasState(CardStateName.Original)) {
+            String n = c.getState(CardStateName.Original).getName();
+            if (n != null && !n.isEmpty()) {
+                return n;
+            }
+        }
+        return c.getName();
     }
 
     /** Every seat's setup "tapped_after_untap" refs, tapped by the raw setter

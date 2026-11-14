@@ -213,7 +213,7 @@ public final class SnapshotWriter {
         JsonArray exa = new JsonArray();
         ex.forEach(exa::add);
         po.add("exile", exa);
-        po.add("command", new JsonArray());
+        po.add("command", commandZone(p));
         List<Card> lib = new ArrayList<>();
         p.getCardsIn(ZoneType.Library).forEach(lib::add);
         po.addProperty("library_count", lib.size());
@@ -227,7 +227,69 @@ public final class SnapshotWriter {
             amounts[k] = p.getManaPool().getAmountOfColor((byte) ManaAtom.MANATYPES[k]);
         }
         po.addProperty("pool", pool(amounts));
+        JsonObject casts = commanderCasts(p);
+        if (casts.size() > 0) {
+            po.add("commander_casts", casts);
+        }
+        JsonObject damage = commanderDamage(p, seats);
+        if (damage.size() > 0) {
+            po.add("commander_damage", damage);
+        }
         return po;
+    }
+
+    /** The seat's command zone as gorge reports it: the cards there (a
+     * commander, sorted by name), not Forge's intangible effect cards (the
+     * Commander Effect, emblems, boons), which gorge keeps as no zone object. */
+    static JsonArray commandZone(Player p) {
+        List<String> names = new ArrayList<>();
+        for (Card c : p.getCardsIn(ZoneType.Command)) {
+            if (!c.isImmutable() && !c.isEmblem()) {
+                names.add(zoneName(c));
+            }
+        }
+        Collections.sort(names);
+        JsonArray a = new JsonArray();
+        names.forEach(a::add);
+        return a;
+    }
+
+    /** gorge's OracleSnapPlayer.CommanderCasts: how many times each of this
+     * seat's commanders was cast from the command zone (CR 903.8), keyed by
+     * the commander's front-face name, non-zero entries only. */
+    static JsonObject commanderCasts(Player p) {
+        java.util.Map<String, Integer> m = new java.util.TreeMap<>();
+        for (Card c : p.getCommanders()) {
+            int n = p.getCommanderCast(c);
+            if (n != 0) {
+                m.put(SetupBuilder.frontFaceName(c), n);
+            }
+        }
+        return tally(m);
+    }
+
+    /** gorge's OracleSnapPlayer.CommanderDamage: the combat damage this seat
+     * has taken from each commander (CR 903.10a), keyed "pN:<front-face
+     * name>" with N the commander's owner, non-zero entries only. */
+    static JsonObject commanderDamage(Player p, Player[] seats) {
+        java.util.Map<String, Integer> m = new java.util.TreeMap<>();
+        for (int s = 0; s < seats.length; s++) {
+            for (Card c : seats[s].getCommanders()) {
+                int n = p.getCommanderDamage(c);
+                if (n != 0) {
+                    m.put("p" + s + ":" + SetupBuilder.frontFaceName(c), n);
+                }
+            }
+        }
+        return tally(m);
+    }
+
+    static JsonObject tally(java.util.Map<String, Integer> m) {
+        JsonObject o = new JsonObject();
+        for (java.util.Map.Entry<String, Integer> e : m.entrySet()) {
+            o.addProperty(e.getKey(), e.getValue());
+        }
+        return o;
     }
 
     private static JsonObject permanent(Card c, Player[] seats, Combat combat) {

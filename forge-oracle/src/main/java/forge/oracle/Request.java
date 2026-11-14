@@ -128,6 +128,65 @@ public final class Request {
         throw new IllegalArgumentException("invalid scenario turn " + value + " (want integer 1..100)");
     }
 
+    /** Scenario.Format for a Commander game (gorge's oracleFormatCodes key). */
+    public static final String FORMAT_COMMANDER = "commander";
+
+    /** The scenario's game format: "" (a constructed game) or
+     * {@link #FORMAT_COMMANDER}. gorge's runner also accepts "constructed" as
+     * the constructed spelling; it reads back as "". Anything else is a harness
+     * error, as gorge's runner refuses it ("unknown format"). */
+    public String format() {
+        return scenarioFormat(item);
+    }
+
+    public static String scenarioFormat(JsonObject sc) {
+        String f = str(sc, "format");
+        switch (f) {
+            case "":
+            case "constructed":
+                return "";
+            case FORMAT_COMMANDER:
+                return f;
+            default:
+                throw new HarnessError("unknown format \"" + f + "\"");
+        }
+    }
+
+    /** Whether this is a Commander game (CR 903): 40 starting life, each
+     * seat's commanders from its setup command list. */
+    public boolean commander() {
+        return format().equals(FORMAT_COMMANDER);
+    }
+
+    /** The scenario's seat count. The driver seats two players; the
+     * scenario's "players" (gorge's 3-seat scenarios) is not read yet, so a
+     * multiplayer seat count lives here and nowhere else. */
+    public int seatCount() {
+        return 2;
+    }
+
+    /** A setup map of name -> count ("commander_casts", "commander_damage"),
+     * in key order. A non-integer value is a harness error. */
+    public static Map<String, Integer> counts(JsonObject o, String k) {
+        Map<String, Integer> out = new TreeMap<>();
+        JsonElement e = o == null ? null : o.get(k);
+        if (e == null || e.isJsonNull()) {
+            return out;
+        }
+        if (!e.isJsonObject()) {
+            throw new HarnessError("setup " + k + " is not an object");
+        }
+        for (Map.Entry<String, JsonElement> x : e.getAsJsonObject().entrySet()) {
+            JsonElement v = x.getValue();
+            if (v == null || !v.isJsonPrimitive() || !v.getAsJsonPrimitive().isNumber()
+                    || !v.getAsString().matches("-?[0-9]+")) {
+                throw new HarnessError("setup " + k + " " + x.getKey() + " is not an integer");
+            }
+            out.put(x.getKey(), Integer.parseInt(v.getAsString()));
+        }
+        return out;
+    }
+
     /** The setup object of seat i ("p0"/"p1"), or an empty object. */
     public JsonObject seat(int i) {
         JsonElement s = item.get("setup");
