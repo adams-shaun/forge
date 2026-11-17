@@ -47,10 +47,12 @@ import forge.item.PaperToken;
  *     (P0-REPORT: suppressing all triggers would drop them). The active
  *     player is set before placement, because Forge's TriggerHandler runs no
  *     trigger while there is no active player.</li>
- * <li>Placement is a restatement of the board, so entry replacements do not
- *     apply: a permanent does not enter tapped and takes no entry counter
- *     but the ones gorge's MoveZone grants (loyalty, a front-face Saga's lore,
- *     defense); the scenario's own tapped and counters fields state the rest.</li>
+ * <li>Placement keeps every entry counter replacement the scenario's counters
+ *     field is stated net of: the real battlefield move grants them (loyalty,
+ *     defense, a front-face Saga's lore, K:etbCounter, K:ETBReplacement and a
+ *     printed R:Event$ Moved body), exactly as gorge's placement re-runs them.
+ *     A tap an entry replacement applies is undone and the scenario's tapped
+ *     field re-states it.</li>
  * <li>Then, per placement as gorge emits them: back face, tapped, setup
  *     counters (through the counter table, triggers live), speed, life.</li>
  * <li>Setup {@code tokens} (forge-gui res/tokenscripts stems) are minted at the
@@ -542,15 +544,17 @@ final class SetupBuilder {
         return -1;
     }
 
-    /** Hand first, then a real move to the battlefield, so the entry counters
-     * gorge's MoveZone grants (a planeswalker's loyalty, a Saga's lore, a
-     * Battle's defense) are granted and their CounterAdded triggers fire. Setup
-     * is a restatement of the board, not an entry, so every other
-     * enters-the-battlefield effect is undone: a replacement that enters the
-     * permanent tapped, any other entry counter (the scenario's own tapped and
-     * counters fields state those), and, for a back-face placement, the Saga
-     * lore counter (the permanent stands on a face with no chapters). Returns
-     * the permanent on the battlefield, which may be a new object. */
+    /** Hand first, then a real move to the battlefield, so every entry counter
+     * replacement the setup contract restates is applied: the ones gorge's
+     * MoveZone grants (a planeswalker's loyalty, a Saga's lore, a Battle's
+     * defense, a K:etbCounter or K:ETBReplacement body, a printed
+     * R:Event$ Moved body such as Tonberry's stun counter) and their
+     * CounterAdded triggers fire. The scenario's counters field is stated net
+     * of those grants, so no counter the move applied is removed; a tap an
+     * entry replacement applies is undone because the tapped field re-states
+     * it, and a back-face Saga loses the front face's lore counter (the
+     * permanent stands on a face with no chapters). Returns the permanent on
+     * the battlefield, which may be a new object. */
     static Card putOntoBattlefield(Game game, Player p, Card c, boolean backFace) {
         p.getZone(ZoneType.Hand).add(c);
         // gorge f788f3c31: a front-face Saga keeps its entry chapter I trigger
@@ -576,26 +580,16 @@ final class SetupBuilder {
             moved = c;
         }
         moved.setTapped(false);
-        // gorge's placement re-runs a printed K:etbCounter and keeps what it
-        // grants (the scenario states only the counters beyond it), so those
-        // kinds stay.
-        java.util.Set<String> printed = new java.util.HashSet<>();
-        for (forge.game.keyword.KeywordInterface k : moved.getKeywords()) {
-            String kw = k.getOriginal();
-            if (kw != null && kw.startsWith("etbCounter:")) {
-                String[] parts = kw.split(":");
-                if (parts.length > 1) {
-                    printed.add(parts[1].toUpperCase(java.util.Locale.ROOT));
-                }
-            }
-        }
-        for (CounterType t : new ArrayList<>(moved.getCounters().elementSet())) {
-            boolean entry = t.is(CounterEnumType.LOYALTY) || t.is(CounterEnumType.DEFENSE)
-                    || printed.contains(t.toString().toUpperCase(java.util.Locale.ROOT))
-                    || (t.is(CounterEnumType.LORE) && !saga);
-            if (!entry) {
-                moved.setCounters(t, 0);
-            }
+        // The move has already applied every entry counter replacement
+        // (K:etbCounter, K:ETBReplacement and a printed R:Event$ Moved body:
+        // Tonberry's stun counter). gorge's placement re-runs those grants,
+        // and the scenario's counters field states only the counters beyond
+        // them (lower setupCounters), so every counter the move granted stays.
+        // The one entry counter setup does not re-state is a back-face Saga's
+        // front-face lore counter: the permanent stands on a face with no
+        // chapters.
+        if (saga) {
+            moved.setCounters(CounterEnumType.LORE, 0);
         }
         return moved;
     }
