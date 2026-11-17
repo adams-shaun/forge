@@ -1535,6 +1535,12 @@ public final class StepMachine {
         if (names.size() <= 1) {
             return new ArrayList<>(cards); // identical names: the order is unobservable
         }
+        if (!what.contains("Graveyard")) {
+            // The pin is graveyard-specific. A library/exile order is still
+            // unscripted, and a leftover graveyard pin must not answer it.
+            miss("order", what);
+            return null;
+        }
         Decision d = take(seat, DecisionQueue::isGraveyardOrder);
         return orderCardsByPicks(cards, d, what, Card::getName);
     }
