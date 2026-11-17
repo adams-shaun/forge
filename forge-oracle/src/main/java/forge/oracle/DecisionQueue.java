@@ -133,10 +133,18 @@ public final class DecisionQueue {
         return true;
     }
 
+    /** A CR 404.3 graveyard order pin: gorge's final order for a simultaneous
+     * multi-card move to one graveyard, one pick per card. It answers Forge's
+     * separate "order to Graveyard" ask. A move Forge never asks about leaves
+     * the order unobservable, so an unconsumed pin is not a leftover. */
+    public static boolean isGraveyardOrder(Decision d) {
+        return d.kind.equals("order") && d.gorgeKind.equals("graveyard_order");
+    }
+
     public List<Decision> unconsumed() {
         List<Decision> out = new ArrayList<>();
         for (Decision d : all) {
-            if (!d.consumed && !isPaymentWindow(d)) {
+            if (!d.consumed && !isPaymentWindow(d) && !isGraveyardOrder(d)) {
                 out.add(d);
             }
         }

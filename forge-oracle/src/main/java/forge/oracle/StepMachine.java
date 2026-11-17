@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 import com.google.common.collect.Lists;
@@ -1521,6 +1522,11 @@ public final class StepMachine {
         return null;
     }
 
+    /** The CR 404.3 order of a simultaneous multi-card graveyard move. Forge
+     * asks this separately from the selection, so gorge's order travels as its
+     * own "order" decision (gorge_kind "graveyard_order", one pick per card in
+     * gorge's order); the selection decision was already consumed when the
+     * move started. Identically named cards are unobservable, as before. */
     List<Card> orderCards(int seat, Collection<Card> cards, String what) {
         Set<String> names = new HashSet<>();
         for (Card c : cards) {
@@ -1529,8 +1535,37 @@ public final class StepMachine {
         if (names.size() <= 1) {
             return new ArrayList<>(cards); // identical names: the order is unobservable
         }
-        miss("order", what);
-        return null;
+        Decision d = take(seat, DecisionQueue::isGraveyardOrder);
+        return orderCardsByPicks(cards, d, what, Card::getName);
+    }
+
+    /** The queue-independent half of {@link #orderCards}: the picked names in
+     * gorge's order, matched to the offered objects by name. A pick that names
+     * no offered object is skipped (the decision may cover an earlier move in
+     * the same step); an offered object that no pick names means the script is
+     * not an answer to this question. Package-visible so the unit test can
+     * exercise the matching without a Game. */
+    <T> List<T> orderCardsByPicks(Collection<T> cards, Decision d, String what, Function<T, String> nameOf) {
+        if (d == null) {
+            miss("order", what);
+            return null;
+        }
+        List<T> left = new ArrayList<>(cards);
+        List<T> ordered = new ArrayList<>();
+        for (String pick : d.picks) {
+            for (int i = 0; i < left.size(); i++) {
+                if (pick.equals(nameOf.apply(left.get(i)))) {
+                    ordered.add(left.remove(i));
+                    break;
+                }
+            }
+        }
+        if (!left.isEmpty()) {
+            miss("order", what + ": gorge order " + d.picks + " does not name every card");
+            return null;
+        }
+        note("order step " + stepIdx + ": " + what + " " + d.picks);
+        return ordered;
     }
 
     /** gorge's trigger_order ("order" kind, pick kinds "trigger"): picks[0]
