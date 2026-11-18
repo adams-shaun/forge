@@ -60,6 +60,60 @@ public class GameRequestTest {
         expect("{\"id\":\"a\",\"seats\":[]}", "two seats");
     }
 
+    /** A Commander seat: a commander, an optional partner, and a short deck. */
+    static String cmdrSeat(String name, String commander, String partner) {
+        return "{\"name\":\"" + name + "\",\"commander\":\"" + commander + "\""
+                + (partner == null ? "" : ",\"partner\":\"" + partner + "\"")
+                + ",\"cards\":[{\"name\":\"Plains\",\"count\":2}]}";
+    }
+
+    static String cmdrPod(String id, int n) {
+        StringBuilder b = new StringBuilder("{\"id\":\"" + id + "\",\"format\":\"commander\",\"max_turns\":8,"
+                + "\"max_ms\":30000,\"seats\":[");
+        for (int i = 0; i < n; i++) {
+            b.append(i == 0 ? "" : ",").append(i == 1
+                    ? cmdrSeat("p1", "Rograkh, Son of Rohgahh", "Ardenn, Intrepid Archaeologist")
+                    : cmdrSeat("p" + i, "Isamaru, Hound of Konda", null));
+        }
+        return b.append("]}").toString();
+    }
+
+    @Test
+    public void commanderPodsSeatTwoToFour() {
+        for (int n = 2; n <= 4; n++) {
+            GameRequest r = GameRequest.parse(cmdrPod("pod" + n, n));
+            assertTrue(r.commander(), "format commander");
+            assertEquals(r.seats.size(), n);
+            assertEquals(r.seats.get(0).commanders, java.util.List.of("Isamaru, Hound of Konda"));
+            assertEquals(r.seats.get(1).commanders,
+                    java.util.List.of("Rograkh, Son of Rohgahh", "Ardenn, Intrepid Archaeologist"));
+            // The commander is in the command zone, not the library.
+            assertEquals(r.seats.get(1).deck, java.util.List.of("Plains", "Plains"));
+            assertEquals(r.maxTurns, 8);
+        }
+    }
+
+    @Test
+    public void constructedStaysTwoSeatsAndNamesNoCommander() {
+        GameRequest r = GameRequest.parse(TWO_SEATS);
+        assertTrue(!r.commander(), "constructed by default");
+        assertTrue(r.seats.get(0).commanders.isEmpty());
+        expect("{\"id\":\"a\",\"format\":\"constructed\",\"seats\":["
+                + "{\"cards\":[{\"name\":\"Island\"}]},{\"cards\":[{\"name\":\"Island\"}]},"
+                + "{\"cards\":[{\"name\":\"Island\"}]}]}", "two seats");
+        expect("{\"id\":\"a\",\"seats\":[" + cmdrSeat("a", "Isamaru, Hound of Konda", null) + ","
+                + cmdrSeat("b", "Isamaru, Hound of Konda", null) + "]}", "format commander");
+    }
+
+    @Test
+    public void rejectsBadCommanderPods() {
+        expect(cmdrPod("five", 5), "2 to 4 seats");
+        expect(cmdrPod("one", 1), "2 to 4 seats");
+        expect("{\"id\":\"a\",\"format\":\"commander\",\"seats\":[" + cmdrSeat("a", "Isamaru, Hound of Konda", null)
+                + ",{\"cards\":[{\"name\":\"Island\"}]}]}", "seat 1 has no commander");
+        expect("{\"id\":\"a\",\"format\":\"oathbreaker\",\"seats\":[]}", "unknown format oathbreaker");
+    }
+
     @Test
     public void rejectsEmptyAndBadDecks() {
         expect("{\"id\":\"a\",\"seats\":[{\"cards\":[]},{\"cards\":[{\"name\":\"Island\"}]}]}", "empty deck");
