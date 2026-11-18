@@ -18,8 +18,15 @@ import com.google.gson.JsonParser;
  * {"id": "...",
  *  "seats": [{"name": "p0", "cards": [{"name": "Lightning Bolt", "count": 4}]},
  *            {"cards": [{"name": "Mountain", "count": 20}, ...]}],
- *  "max_turns": 60, "max_ms": 60000, "seed": 12345}
+ *  "max_turns": 60, "max_ms": 60000, "seed": 12345,
+ *  "shadow_log": "out/g1.jsonl", "random_seat": 1}
  * </pre>
+ *
+ * {@code shadow_log} (optional) is the path a {@link ShadowLog}
+ * ({@code forge-shadow-1}) is written to: every seat without a bridge is then
+ * a {@link RecordingController}. {@code random_seat} (optional, needs
+ * {@code shadow_log}) is the one seat that answers in random mode; the caller
+ * rotates it by seed.
  *
  * {@code "format": "commander"} makes it a Commander pod of 2 to 4 seats
  * (CR 903): each seat names its {@code commander} and, for a partner pair,
@@ -45,6 +52,10 @@ public final class GameRequest {
     public final long maxMs;
     public final long seed;
     public final String name;
+    /** The forge-shadow-1 log path, or "" for none. */
+    public final String shadowLog;
+    /** The random-mode seat, or -1 for none. */
+    public final int randomSeat;
     /** "constructed" or "commander". */
     public final String format;
 
@@ -71,13 +82,16 @@ public final class GameRequest {
         }
     }
 
-    private GameRequest(String id, List<Seat> seats, int maxTurns, long maxMs, long seed, String name, String format) {
+    private GameRequest(String id, List<Seat> seats, int maxTurns, long maxMs, long seed, String name, String format,
+            String shadowLog, int randomSeat) {
         this.id = id;
         this.seats = Collections.unmodifiableList(seats);
         this.maxTurns = maxTurns;
         this.maxMs = maxMs;
         this.seed = seed;
         this.name = name == null ? "" : name;
+        this.shadowLog = shadowLog;
+        this.randomSeat = randomSeat;
         this.format = format;
     }
 
@@ -162,7 +176,11 @@ public final class GameRequest {
             throw new IllegalArgumentException("max_ms must be positive");
         }
         long seed = o.has("seed") ? o.get("seed").getAsLong() : ForgeEngine.seed(id);
-        return new GameRequest(id, seats, maxTurns, maxMs, seed, str(o, "name"), format);
+        int randomSeat = intOr(o, "random_seat", -1);
+        if (randomSeat < -1 || randomSeat >= seats.size()) {
+            throw new IllegalArgumentException("random_seat " + randomSeat + " is not a seat");
+        }
+        return new GameRequest(id, seats, maxTurns, maxMs, seed, str(o, "name"), format, str(o, "shadow_log"), randomSeat);
     }
 
     /** A seat's deck: either an inline {@code cards} array

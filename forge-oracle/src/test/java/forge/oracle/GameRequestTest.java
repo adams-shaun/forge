@@ -55,6 +55,19 @@ public class GameRequestTest {
     }
 
     @Test
+    public void shadowLogAndRandomSeatAreOptional() {
+        GameRequest r = GameRequest.parse(TWO_SEATS);
+        assertEquals(r.shadowLog, "");
+        assertEquals(r.randomSeat, -1);
+        GameRequest s = GameRequest.parse("{\"id\":\"s\",\"shadow_log\":\"g.jsonl\",\"random_seat\":1,"
+                + "\"seats\":[{\"cards\":[{\"name\":\"Island\"}]},{\"cards\":[{\"name\":\"Island\"}]}]}");
+        assertEquals(s.shadowLog, "g.jsonl");
+        assertEquals(s.randomSeat, 1);
+        expect("{\"id\":\"a\",\"random_seat\":2,\"seats\":[{\"cards\":[{\"name\":\"Island\"}]},"
+                + "{\"cards\":[{\"name\":\"Island\"}]}]}", "random_seat 2 is not a seat");
+    }
+
+    @Test
     public void rejectsWrongSeatCount() {
         expect("{\"id\":\"a\",\"seats\":[{\"cards\":[{\"name\":\"Island\"}]}]}", "two seats");
         expect("{\"id\":\"a\",\"seats\":[]}", "two seats");
