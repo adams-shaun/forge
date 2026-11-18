@@ -816,7 +816,7 @@ public final class BridgeController extends PlayerControllerAi {
      * target set for them (see chooseSpellAbilityToPlay). */
     private final List<SpellAbility> unavailable = new ArrayList<>();
 
-    private static boolean needsTargets(SpellAbility sa) {
+    static boolean needsTargets(SpellAbility sa) {
         for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
             if (cur.usesTargeting()) {
                 return true;
@@ -825,7 +825,7 @@ public final class BridgeController extends PlayerControllerAi {
         return false;
     }
 
-    private static boolean targetsValid(SpellAbility sa) {
+    static boolean targetsValid(SpellAbility sa) {
         for (SpellAbility cur = sa; cur != null; cur = cur.getSubAbility()) {
             if (cur.usesTargeting() && !cur.isTargetNumberValid()) {
                 return false;
@@ -854,8 +854,8 @@ public final class BridgeController extends PlayerControllerAi {
      * command zone, every exile and every battlefield), so battlefield
      * activations and graveyard/exile/command casts are offered too. canPlay
      * then keeps only what this seat may actually activate or cast. */
-    private CardCollection offerCards() {
-        return forge.ai.ComputerUtilAbility.getAvailableCards(getGame(), player);
+    private static CardCollection offerCards(Game game, Player player) {
+        return forge.ai.ComputerUtilAbility.getAvailableCards(game, player);
     }
 
     /** Every SpellAbility the seat can play AND pay for right now, in a stable
@@ -868,11 +868,17 @@ public final class BridgeController extends PlayerControllerAi {
      * every hand card was offered whenever its timing allowed, botpolicy
      * picked the best one, the payment failed and the priority passed. */
     private List<SpellAbility> offer() {
+        return offer(getGame(), player, unavailable);
+    }
+
+    /** {@link #offer()} for any seat: the {@link RecordingController} lists
+     * the same options. Anything in {@code unavailable} is left out. */
+    static List<SpellAbility> offer(Game game, Player player, List<SpellAbility> unavailable) {
         List<SpellAbility> base = new ArrayList<>();
-        for (Card c : offerCards()) {
+        for (Card c : offerCards(game, player)) {
             base.addAll(c.getAllPossibleAbilities(player, false));
         }
-        CardCollection lands = forge.ai.ComputerUtilAbility.getAvailableLandsToPlay(getGame(), player);
+        CardCollection lands = forge.ai.ComputerUtilAbility.getAvailableLandsToPlay(game, player);
         if (lands != null) {
             for (Card land : lands) {
                 for (SpellAbility sa : land.getAllPossibleAbilities(player, true)) {
@@ -904,7 +910,7 @@ public final class BridgeController extends PlayerControllerAi {
                 }
             }
         }
-        out.removeIf(sa -> !playable(sa) || unavailable.contains(sa));
+        out.removeIf(sa -> !playable(sa, player) || unavailable.contains(sa));
         // A land can be reported twice (hand ability and the land list);
         // keep the first.
         List<SpellAbility> unique = new ArrayList<>();
@@ -928,17 +934,17 @@ public final class BridgeController extends PlayerControllerAi {
     }
 
     /** Legal now and payable now. */
-    private boolean playable(SpellAbility sa) {
+    private static boolean playable(SpellAbility sa, Player player) {
         if (!sa.canPlay()) {
             return false;
         }
         if (sa.isLandAbility()) {
             return true;
         }
-        return affordable(sa) && targetsPossible(sa);
+        return affordable(sa, player) && targetsPossible(sa);
     }
 
-    private boolean affordable(SpellAbility sa) {
+    private static boolean affordable(SpellAbility sa, Player player) {
         return forge.ai.ComputerUtilMana.canPayManaCost(sa, player, 0, false)
                 && forge.game.cost.CostPayment.canPayAdditionalCosts(sa.getPayCosts(), sa, false, player);
     }
@@ -946,7 +952,7 @@ public final class BridgeController extends PlayerControllerAi {
     /** gorge's option label shape: "Cast <name>" for a spell, "<name>: <text>"
      * for an ability (botpolicy reads an ability's first digit run as its
      * cost). */
-    private static String label(SpellAbility sa) {
+    static String label(SpellAbility sa) {
         Card host = sa.getHostCard();
         String name = host == null ? "?" : host.getName();
         if (sa.isLandAbility()) {
@@ -960,7 +966,7 @@ public final class BridgeController extends PlayerControllerAi {
 
     /** gorge's cast Mode for the variants botpolicy prices: a kicked cast and
      * a flashback cast. Every other alternative is an ordinary cast. */
-    private static String mode(SpellAbility sa) {
+    static String mode(SpellAbility sa) {
         if (!sa.isSpell()) {
             return "";
         }
@@ -976,7 +982,7 @@ public final class BridgeController extends PlayerControllerAi {
         return "";
     }
 
-    private static String actionKind(SpellAbility sa) {
+    static String actionKind(SpellAbility sa) {
         if (sa.isLandAbility()) {
             return "play_land";
         }

@@ -82,9 +82,34 @@ public final class GameReplay {
         return row;
     }
 
-    /** Builds both decks, then hands the game to Forge's own loop. */
+    /** Builds both decks, then hands the game to Forge's own loop, writing
+     * the request's {@code shadow_log} when it names one. */
     private JsonObject play(GameRequest req) {
+        if (req.shadowLog.isEmpty()) {
+            if (req.randomSeat >= 0) {
+                throw new IllegalArgumentException("random_seat needs a shadow_log");
+            }
+            return play(req, null);
+        }
+        try (java.io.Writer w = Files.newBufferedWriter(Paths.get(req.shadowLog), StandardCharsets.UTF_8)) {
+            JsonObject row = play(req, w);
+            row.addProperty("shadow_log", req.shadowLog);
+            return row;
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    /** One game; with {@code shadow} non-null every seat without a bridge
+     * is a {@link RecordingController} writing {@code forge-shadow-1} there
+     * (the random-mode seat's stream is {@link #randomSeed}).
+     * Package-private for the recorder's tests. */
+    JsonObject play(GameRequest req, java.io.Writer shadow) {
         MyRandom.setRandom(new Random(req.seed));
+        GameRules rules = new GameRules(GameType.Constructed);
+        ShadowLog log = shadow == null ? null
+                : new ShadowLog(shadow, req, forgeRef,
+                        rules.getGameType() == GameType.Commander ? "commander" : "constructed", req.randomSeat);
 
         List<RegisteredPlayer> players = new ArrayList<>();
         List<BridgeLobbyPlayer> bridges = new ArrayList<>();
@@ -92,7 +117,9 @@ public final class GameReplay {
         for (int i = 0; i < req.seats.size(); i++) {
             GameRequest.Seat s = req.seats.get(i);
             LobbyPlayerAi lobby;
-            if (s.bridge.isEmpty()) {
+            if (s.bridge.isEmpty() && log != null) {
+                lobby = new RecordingLobbyPlayer(s.name, i, log, i == req.randomSeat, randomSeed(req.seed, i));
+            } else if (s.bridge.isEmpty()) {
                 lobby = new LobbyPlayerAi(s.name, null);
             } else {
                 // Each bridged seat gets its own rng stream, derived from the
@@ -105,22 +132,31 @@ public final class GameReplay {
             }
             players.add(new RegisteredPlayer(buildDeck(s)).setPlayer(lobby));
         }
-        GameRules rules = new GameRules(GameType.Constructed);
         Match match = new Match(rules, players, "game");
         Game game = new Game(players, rules, match);
         // The live player list shrinks when a seat loses; keep our own refs.
         Player p0 = game.getPlayers().get(0);
         Player p1 = game.getPlayers().get(1);
         Player[] seatRefs = {p0, p1};
+        if (log != null) {
+            log.bind(game, game.getPlayers().toArray(new Player[0]));
+        }
 
         long start = System.nanoTime();
         Deadline deadline = new Deadline(start, req.maxMs, req.maxTurns, game);
+        String stopped = null;
         try {
             match.startGame(game, deadline::check);
             deadline.check();
+        } catch (RuntimeException | Error e) {
+            stopped = ResultRow.message(e);
+            throw e;
         } finally {
             for (BridgeLobbyPlayer b : bridges) {
                 b.close();
+            }
+            if (log != null) {
+                log.end(game, players, stopped);
             }
         }
 
@@ -195,6 +231,9 @@ public final class GameReplay {
             bridgeFallbacks.add(fo);
         }
         row.add("bridge_fallbacks", bridgeFallbacks);
+        if (log != null && log.error() != null) {
+            row.addProperty("shadow_error", ResultRow.message(log.error()));
+        }
         // How much of the match the bridge answered: asks per kind and the
         // option counts. Diagnostics only; not part of game_sha.
         JsonArray bridgeAsks = new JsonArray();
@@ -226,6 +265,16 @@ public final class GameReplay {
         row.addProperty("ms", (System.nanoTime() - start) / 1_000_000);
         row.addProperty("game_sha", gameSha(row));
         return row;
+    }
+
+    /** A random-mode seat's seed: the game seed and the seat through the
+     * SplitMix64 finalizer, since java.util.Random's first draws from nearby
+     * seeds are correlated (four seeds' first nextBoolean all agreed). */
+    static long randomSeed(long seed, int seat) {
+        long z = seed + (seat + 1) * 0x9E3779B97F4A7C15L;
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
     }
 
     /** A deck built strictly: every name must resolve to a paper card. A name
