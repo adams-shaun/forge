@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.zip.CRC32;
 
+import com.google.common.eventbus.Subscribe;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -23,11 +24,14 @@ import com.google.gson.JsonObject;
 import forge.StaticData;
 import forge.ai.LobbyPlayerAi;
 import forge.deck.Deck;
+import forge.deck.DeckSection;
 import forge.game.Game;
 import forge.game.GameEndReason;
 import forge.game.GameRules;
 import forge.game.GameType;
 import forge.game.Match;
+import forge.game.event.GameEventTurnBegan;
+import forge.game.event.GameEventTurnPhase;
 import forge.game.player.Player;
 import forge.game.player.RegisteredPlayer;
 import forge.game.zone.ZoneType;
@@ -106,7 +110,15 @@ public final class GameReplay {
      * Package-private for the recorder's tests. */
     JsonObject play(GameRequest req, java.io.Writer shadow) {
         MyRandom.setRandom(new Random(req.seed));
-        GameRules rules = new GameRules(GameType.Constructed);
+        GameRules rules;
+        if (req.commander()) {
+            // The Commander variant applied, so the commander rules run (the
+            // CR 903.9 return to the command zone, the 903.10a damage loss).
+            rules = new GameRules(GameType.Commander);
+            rules.addAppliedVariant(GameType.Commander);
+        } else {
+            rules = new GameRules(GameType.Constructed);
+        }
         ShadowLog log = shadow == null ? null
                 : new ShadowLog(shadow, req, forgeRef,
                         rules.getGameType() == GameType.Commander ? "commander" : "constructed", req.randomSeat);
@@ -130,14 +142,21 @@ public final class GameReplay {
                 bridgeSeats.add(i);
                 lobby = b;
             }
-            players.add(new RegisteredPlayer(buildDeck(s)).setPlayer(lobby));
+            if (req.commander()) {
+                // CR 903.6, 903.7: the commanders start in the command zone
+                // and the seat at 40 life.
+                players.add(RegisteredPlayer.forCommander(buildCommanderDeck(s)).setPlayer(lobby));
+            } else {
+                players.add(new RegisteredPlayer(buildDeck(s)).setPlayer(lobby));
+            }
         }
         Match match = new Match(rules, players, "game");
         Game game = new Game(players, rules, match);
         // The live player list shrinks when a seat loses; keep our own refs.
-        Player p0 = game.getPlayers().get(0);
-        Player p1 = game.getPlayers().get(1);
-        Player[] seatRefs = {p0, p1};
+        Player[] seatRefs = new Player[req.seats.size()];
+        for (int i = 0; i < seatRefs.length; i++) {
+            seatRefs[i] = game.getPlayers().get(i);
+        }
         if (log != null) {
             log.bind(game, game.getPlayers().toArray(new Player[0]));
         }
@@ -145,6 +164,10 @@ public final class GameReplay {
         long start = System.nanoTime();
         Deadline deadline = new Deadline(start, req.maxMs, req.maxTurns, game);
         String stopped = null;
+        if (req.commander()) {
+            // A pod is long: hold it to its caps inside Forge's loop.
+            game.subscribeToEvents(deadline);
+        }
         try {
             match.startGame(game, deadline::check);
             deadline.check();
@@ -176,20 +199,31 @@ public final class GameReplay {
             row.addProperty("id", req.id);
         }
         row.addProperty("seed", req.seed);
+        if (req.commander()) {
+            row.addProperty("format", req.format);
+        }
 
         JsonArray seats = new JsonArray();
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < seatRefs.length; i++) {
             Player p = seatRefs[i];
             JsonObject so = new JsonObject();
             so.addProperty("name", req.seats.get(i).name);
             so.addProperty("life", p.getLife());
             so.addProperty("library", p.getCardsIn(ZoneType.Library).size());
             so.addProperty("lost", p.hasLost());
+            if (req.commander()) {
+                JsonArray cmd = new JsonArray();
+                for (PaperCard pc : players.get(i).getCommanders()) {
+                    cmd.add(pc.getName());
+                }
+                so.add("commanders", cmd);
+            }
             seats.add(so);
         }
         row.add("seats", seats);
 
-        boolean over = game.isGameOver();
+        // A cap that ended the pod inside the loop leaves it unfinished.
+        boolean over = game.isGameOver() && deadline.why == null;
         row.addProperty("over", over);
         row.addProperty("turns", game.getPhaseHandler().getTurn());
         if (over) {
@@ -292,10 +326,28 @@ public final class GameReplay {
         return d;
     }
 
+    /** A Commander pod's deck: the library, and its commanders (commander,
+     * then partner) in the command section, every name resolved strictly. */
+    private static Deck buildCommanderDeck(GameRequest.Seat seat) {
+        Deck d = buildDeck(seat);
+        for (String name : seat.commanders) {
+            PaperCard pc = StaticData.instance().getCommonCards().getCard(name);
+            if (pc == null) {
+                throw new IllegalArgumentException("commander not found: " + name);
+            }
+            d.getOrCreate(DeckSection.Commander).add(pc, 1);
+        }
+        return d;
+    }
+
     /** The wall/turn/turn-count cap, checked from Forge's start hook and after
      * {@code startGame}. Forge's own loop does not call back per step, so the
      * wall cap is enforced at the only boundary the driver controls; a game
-     * that overruns is reported, not killed (Forge has no safe abort). */
+     * that overruns is reported, not killed (Forge has no safe abort).
+     *
+     * A Commander pod also subscribes it to the game's events: at each turn
+     * and step it ends the game through Forge's own game-over path the moment
+     * a cap is passed, and the row reports the game unfinished. */
     private static final class Deadline {
         final long start;
         final long maxMs;
@@ -310,7 +362,34 @@ public final class GameReplay {
             this.game = game;
         }
 
+        @Subscribe
+        public void turnBegan(GameEventTurnBegan e) {
+            stopIfOver();
+        }
+
+        @Subscribe
+        public void turnPhase(GameEventTurnPhase e) {
+            stopIfOver();
+        }
+
+        private void stopIfOver() {
+            if (why != null || game.isGameOver()) {
+                return;
+            }
+            if ((System.nanoTime() - start) / 1_000_000 > maxMs) {
+                why = "max_ms " + maxMs;
+            } else if (game.getPhaseHandler().getTurn() > maxTurns) {
+                why = "max_turns " + maxTurns;
+            } else {
+                return;
+            }
+            game.setGameOver(GameEndReason.Draw);
+        }
+
         void check() {
+            if (why != null) {
+                return; // already stopped in the loop
+            }
             long ms = (System.nanoTime() - start) / 1_000_000;
             if (ms > maxMs) {
                 why = "max_ms " + maxMs;
