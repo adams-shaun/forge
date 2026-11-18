@@ -21,6 +21,13 @@ import com.google.gson.JsonParser;
  *  "max_turns": 60, "max_ms": 60000, "seed": 12345}
  * </pre>
  *
+ * {@code "format": "commander"} makes it a Commander pod of 2 to 4 seats
+ * (CR 903): each seat names its {@code commander} and, for a partner pair,
+ * its {@code partner}; those go to the command zone and the seat starts at 40
+ * life. A deck file's {@code commander} is the seat's commander there, not a
+ * library card. Without a format (or with {@code "constructed"}) the request
+ * is exactly two seats and names no commander.
+ *
  * {@code seed} is optional; absent, it is the CRC32 of {@code id} (the same
  * scheme {@link ForgeEngine#seed} uses), so a batch is reproducible from its
  * id alone. {@code max_turns} is the phase-handler turn cap; {@code max_ms}
@@ -38,6 +45,8 @@ public final class GameRequest {
     public final long maxMs;
     public final long seed;
     public final String name;
+    /** "constructed" or "commander". */
+    public final String format;
 
     /** One seat's deck: card names with counts, in deck order. A seat with a
      * bridge binary is played by gorge's bot over stdio; otherwise by Forge's
@@ -49,23 +58,38 @@ public final class GameRequest {
         /** Extra arguments for the bridge binary (for example
          * ["-policy", "forge-heuristic"]), passed before its -seed. */
         public final List<String> bridgeArgs;
+        /** The seat's commanders, in order (commander, then partner); empty
+         * outside the commander format. */
+        public final List<String> commanders;
 
-        Seat(String name, List<String> deck, String bridge, List<String> bridgeArgs) {
+        Seat(String name, List<String> deck, String bridge, List<String> bridgeArgs, List<String> commanders) {
             this.name = name;
             this.deck = Collections.unmodifiableList(deck);
             this.bridge = bridge;
             this.bridgeArgs = Collections.unmodifiableList(bridgeArgs);
+            this.commanders = Collections.unmodifiableList(commanders);
         }
     }
 
-    private GameRequest(String id, List<Seat> seats, int maxTurns, long maxMs, long seed, String name) {
+    private GameRequest(String id, List<Seat> seats, int maxTurns, long maxMs, long seed, String name, String format) {
         this.id = id;
         this.seats = Collections.unmodifiableList(seats);
         this.maxTurns = maxTurns;
         this.maxMs = maxMs;
         this.seed = seed;
         this.name = name == null ? "" : name;
+        this.format = format;
     }
+
+    /** Whether this is a Commander pod. */
+    public boolean commander() {
+        return FORMAT_COMMANDER.equals(format);
+    }
+
+    static final String FORMAT_CONSTRUCTED = "constructed";
+    static final String FORMAT_COMMANDER = "commander";
+    /** CR 903 plays with any number of players; the pod runner seats at most four. */
+    static final int MAX_COMMANDER_SEATS = 4;
 
     /** Parses one line. Throws on JSON that is not an object or a spec the
      * driver cannot run (wrong seat count, an empty deck). */
@@ -76,6 +100,11 @@ public final class GameRequest {
         }
         JsonObject o = e.getAsJsonObject();
         String id = str(o, "id");
+        String format = strOr(o, "format", FORMAT_CONSTRUCTED);
+        if (!format.equals(FORMAT_CONSTRUCTED) && !format.equals(FORMAT_COMMANDER)) {
+            throw new IllegalArgumentException("unknown format " + format);
+        }
+        boolean commander = format.equals(FORMAT_COMMANDER);
         List<Seat> seats = new ArrayList<>();
         JsonElement se = o.get("seats");
         if (se == null || !se.isJsonArray()) {
@@ -87,7 +116,8 @@ public final class GameRequest {
                 throw new IllegalArgumentException("seat " + i + " is not an object");
             }
             JsonObject so = s.getAsJsonObject();
-            List<String> deck = deck(so, i);
+            List<String> commanders = new ArrayList<>();
+            List<String> deck = deck(so, i, commander ? commanders : null);
             if (deck.isEmpty()) {
                 throw new IllegalArgumentException("seat " + i + " has an empty deck");
             }
@@ -97,10 +127,30 @@ public final class GameRequest {
                     bridgeArgs.add(arg.getAsString());
                 }
             }
-            seats.add(new Seat(strOr(so, "name", "p" + i), deck, str(so, "bridge"), bridgeArgs));
+            for (String k : new String[] {"commander", "partner"}) {
+                String c = str(so, k);
+                if (c.isEmpty()) {
+                    continue;
+                }
+                if (!commander) {
+                    throw new IllegalArgumentException("seat " + i + " names a " + k + "; that needs format commander");
+                }
+                if (!commanders.contains(c)) {
+                    commanders.add(c);
+                }
+            }
+            if (commander && commanders.isEmpty()) {
+                throw new IllegalArgumentException("seat " + i + " has no commander");
+            }
+            seats.add(new Seat(strOr(so, "name", "p" + i), deck, str(so, "bridge"), bridgeArgs, commanders));
             i++;
         }
-        if (seats.size() != 2) {
+        if (commander) {
+            if (seats.size() < 2 || seats.size() > MAX_COMMANDER_SEATS) {
+                throw new IllegalArgumentException("a commander pod needs 2 to " + MAX_COMMANDER_SEATS
+                        + " seats, got " + seats.size());
+            }
+        } else if (seats.size() != 2) {
             throw new IllegalArgumentException("two seats are required, got " + seats.size());
         }
         int maxTurns = intOr(o, "max_turns", 60);
@@ -112,14 +162,15 @@ public final class GameRequest {
             throw new IllegalArgumentException("max_ms must be positive");
         }
         long seed = o.has("seed") ? o.get("seed").getAsLong() : ForgeEngine.seed(id);
-        return new GameRequest(id, seats, maxTurns, maxMs, seed, str(o, "name"));
+        return new GameRequest(id, seats, maxTurns, maxMs, seed, str(o, "name"), format);
     }
 
     /** A seat's deck: either an inline {@code cards} array
      * ({@code [{"name","count"}]}) or a {@code deck} path to that same JSON,
      * which is gorge's {@code testkit/testutil/decks/*.json} shape (its
-     * {@code commander}, when present, is appended as a one-of). */
-    private static List<String> deck(JsonObject seat, int idx) {
+     * {@code commander}, when present, is appended as a one-of, or in the
+     * commander format goes to {@code commanders} instead). */
+    private static List<String> deck(JsonObject seat, int idx, List<String> commanders) {
         List<String> out = new ArrayList<>();
         JsonElement cards = seat.get("cards");
         if (cards != null && cards.isJsonArray()) {
@@ -131,12 +182,12 @@ public final class GameRequest {
             if (path == null) {
                 throw new IllegalArgumentException("seat " + idx + " has neither cards nor deck");
             }
-            return deckFile(path.getAsString(), idx);
+            return deckFile(path.getAsString(), idx, commanders);
         }
         throw new IllegalArgumentException("seat " + idx + " deck is not a path");
     }
 
-    private static List<String> deckFile(String path, int idx) {
+    private static List<String> deckFile(String path, int idx, List<String> commanders) {
         java.nio.file.Path p = java.nio.file.Path.of(path);
         String text;
         try {
@@ -157,7 +208,11 @@ public final class GameRequest {
         addCards(cards.getAsJsonArray(), out, idx);
         String cmd = str(o, "commander");
         if (!cmd.isEmpty()) {
-            out.add(cmd);
+            if (commanders != null) {
+                commanders.add(cmd);
+            } else {
+                out.add(cmd);
+            }
         }
         return out;
     }
