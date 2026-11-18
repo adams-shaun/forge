@@ -105,8 +105,10 @@ import forge.game.spellability.SpellAbility;
  *   toss is not a rand: {@code start} carries it.</li>
  * <li>{@code snap}: {@code n} (1-based, snaps only), {@code snapshot} (a
  *   {@link SnapshotWriter#snapshot}, gorge's OracleSnapshot shape, checkpoint
- *   "t&lt;turn&gt;:&lt;step&gt;"), written at the start of every step whose stack
- *   is empty.</li>
+ *   "t&lt;turn&gt;:&lt;step&gt;"), written just before a step's first ask when
+ *   the stack is empty then: after the step's turn-based actions (the draw,
+ *   CR 504.1) and before anyone acts, the point gorge's follower stands at.
+ *   A step that asks nothing (untap, cleanup) has no snap.</li>
  * <li>{@code end} (always last): {@code winner} (seat; absent for a draw or
  *   an unfinished game), {@code reason} (Forge's GameEndReason name, or
  *   "unfinished"), {@code over}+, {@code turns}+, {@code asks}+ (the number
@@ -138,6 +140,11 @@ public final class ShadowLog {
     private int snaps;
     private List<Integer> taps;
     private RuntimeException error;
+    /** The checkpoint of the step whose snapshot waits for that step's first
+     * ask, or null. GameEventTurnPhase fires before the step's turn-based
+     * actions, so a snapshot taken there missed the draw-step draw (every
+     * 4-seat pod's first snap diverged from gorge on the active seat's hand). */
+    private String pendingSnap;
 
     /** A log for one game; {@link #bind} it to the game before it starts.
      * {@code gameFormat} is "constructed" or "commander". */
@@ -226,6 +233,7 @@ public final class ShadowLog {
     /** An ask line; its {@code n} is assigned when it is written, and its
      * answer object may still be filled in while the log is held. */
     JsonObject ask(int seat, String kind, String policy, JsonArray options, JsonObject answer) {
+        flushSnap();
         JsonObject o = line("ask");
         o.addProperty("n", 0);
         o.addProperty("seat", seat);
@@ -238,6 +246,26 @@ public final class ShadowLog {
         o.addProperty("policy", policy);
         emit(o);
         return o;
+    }
+
+    /** The current step's checkpoint name, "t&lt;turn&gt;:&lt;step&gt;". */
+    private String checkpoint() {
+        PhaseHandler ph = game.getPhaseHandler();
+        return "t" + ph.getTurn() + ":" + SnapshotWriter.stepName(ph.getPhase());
+    }
+
+    /** Writes the pending step snapshot, once, before the step's first ask,
+     * if the stack is empty and the game is still in that step. */
+    private void flushSnap() {
+        String cp = pendingSnap;
+        pendingSnap = null;
+        if (cp == null || !game.getStack().isEmpty() || !cp.equals(checkpoint())) {
+            return;
+        }
+        JsonObject o = line("snap");
+        o.addProperty("n", 0);
+        o.add("snapshot", SnapshotWriter.snapshot(cp, game, seats));
+        emit(o);
     }
 
     /** Holds every line until the matching {@link #release}: a priority line
@@ -394,14 +422,8 @@ public final class ShadowLog {
                 o.addProperty("seat", seatOf(gs.firstTurn()));
                 write(o);
             } else if (ev instanceof GameEventTurnPhase) {
-                if (headed && game.getStack().isEmpty()) {
-                    PhaseHandler ph = game.getPhaseHandler();
-                    String step = SnapshotWriter.stepName(ph.getPhase());
-                    JsonObject o = line("snap");
-                    o.addProperty("n", 0);
-                    o.add("snapshot", SnapshotWriter.snapshot("t" + ph.getTurn() + ":" + step, game, seats));
-                    emit(o);
-                }
+                // A step that asked nothing leaves its snap unwritten.
+                pendingSnap = headed ? checkpoint() : null;
             } else if (ev instanceof GameEventFlipCoin fc) {
                 if (!fc.startingToss()) {
                     JsonObject o = line("rand");

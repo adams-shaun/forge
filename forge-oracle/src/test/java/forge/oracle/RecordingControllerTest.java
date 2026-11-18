@@ -135,6 +135,48 @@ public class RecordingControllerTest {
         assertEquals(ofType(ls, "header").size(), 1);
     }
 
+    /** A step's snapshot is the state its first ask sees: after the turn-based
+     * actions, so a draw-step snap holds the card just drawn (the farm's
+     * 4-seat pods diverged from gorge at their first t1:draw snap, Forge one
+     * card short, while it snapped at the step's start). */
+    @Test
+    public void aStepSnapFollowsTheTurnBasedActions() {
+        List<JsonObject> ls = lines(record(request(7, "")));
+        int draws = 0;
+        for (int i = 0; i < ls.size(); i++) {
+            JsonObject o = ls.get(i);
+            if (!o.get("t").getAsString().equals("snap")) {
+                continue;
+            }
+            JsonObject s = o.getAsJsonObject("snapshot");
+            assertTrue(i + 1 < ls.size(), "a snap last");
+            JsonObject next = ls.get(i + 1);
+            assertEquals(next.get("t").getAsString(), "ask", "a snap not right before its step's first ask: " + s.get("checkpoint"));
+            assertEquals(next.get("turn").getAsInt(), s.get("turn").getAsInt());
+            assertEquals(next.get("step").getAsString(), s.get("step").getAsString());
+            if (!s.get("step").getAsString().equals("draw")) {
+                continue;
+            }
+            // The upkeep snap of the same turn (no upkeep effects in these decks)
+            // has the active seat's library one card larger.
+            int active = s.get("active").getAsInt();
+            for (int j = i - 1; j >= 0; j--) {
+                JsonObject p = ls.get(j);
+                if (p.get("t").getAsString().equals("snap")) {
+                    JsonObject ps = p.getAsJsonObject("snapshot");
+                    if (ps.get("turn").getAsInt() == s.get("turn").getAsInt() && ps.get("step").getAsString().equals("upkeep")) {
+                        int before = ps.getAsJsonArray("players").get(active).getAsJsonObject().get("library_count").getAsInt();
+                        int after = s.getAsJsonArray("players").get(active).getAsJsonObject().get("library_count").getAsInt();
+                        assertEquals(after, before - 1, "the draw-step snap of turn " + s.get("turn") + " lacks the draw");
+                        draws++;
+                    }
+                    break;
+                }
+            }
+        }
+        assertTrue(draws > 0, "no draw-step snap followed an upkeep snap");
+    }
+
     @Test
     public void theSameSeedWritesTheSameBytes() {
         String a = record(request(11, ""));
