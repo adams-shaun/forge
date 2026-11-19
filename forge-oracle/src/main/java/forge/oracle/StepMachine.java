@@ -1400,16 +1400,27 @@ public final class StepMachine {
             // (a search "up to two" is one gorge decision, two Forge asks).
             List<T> out = new ArrayList<>();
             Set<T> used = new HashSet<>();
+            boolean noop = false;
             while (!carryRefs.isEmpty() && out.size() < max) {
                 T o = matchRef(carryRefs.get(0), opts, used);
                 if (o == null) {
+                    if (min == 0) {
+                        // An up-to pick Forge does not offer is consumed as a
+                        // no-op: the controller may choose fewer, and falling
+                        // back to the AI would pick an unrecorded object.
+                        note("pick step " + stepIdx + " " + what + ": " + carryRefs.get(0)
+                                + " is not among Forge's " + opts.size() + " options; consumed as a no-op");
+                        carryRefs.remove(0);
+                        noop = true;
+                        continue;
+                    }
                     break;
                 }
                 carryRefs.remove(0);
                 used.add(o);
                 out.add(o);
             }
-            if (!out.isEmpty() || (carryRefs.isEmpty() && min == 0)) {
+            if (!out.isEmpty() || noop || (carryRefs.isEmpty() && min == 0)) {
                 if (carryRefs.isEmpty()) {
                     carryOpen = false;
                 }
@@ -1431,9 +1442,21 @@ public final class StepMachine {
                 carryRefs = new ArrayList<>(refsAll.subList(refsNow.size(), refsAll.size()));
                 carryOpen = d.max > refsAll.size() || !carryRefs.isEmpty();
             }
+            boolean noop = false;
             for (String ref : refsNow) {
                 T o = matchRef(ref, opts, used);
                 if (o == null) {
+                    if (min == 0) {
+                        // The recorded pick is already in the effect's target
+                        // state (untap offers only tapped permanents, say), so
+                        // it is absent from Forge's options. Consume it as a
+                        // no-op and answer empty for the remaining asks; the
+                        // AI would untap a card the controller did not choose.
+                        note("pick step " + stepIdx + " " + what + ": " + ref
+                                + " is not among Forge's " + opts.size() + " options; consumed as a no-op");
+                        noop = true;
+                        continue;
+                    }
                     miss(what, "gorge pick " + ref + " is not among Forge's " + opts.size() + " options");
                     return null;
                 }
@@ -1444,7 +1467,7 @@ public final class StepMachine {
                 miss(what, "gorge picked " + out.size() + ", Forge wants " + min + ".." + max);
                 return null;
             }
-            note("pick step " + stepIdx + " " + what + ": " + d.refs());
+            note("pick step " + stepIdx + " " + what + ": " + d.refs() + (noop ? " (no-op)" : ""));
             return out;
         }
         if (opts.isEmpty()) {
@@ -1487,6 +1510,16 @@ public final class StepMachine {
             if (!used.contains(o) && o.equals(e)) {
                 return o;
             }
+        }
+        // A setup-bound ref names one object. If that object is not among the
+        // options, a same-named sibling is not the recorded choice: Forge's
+        // candidate list can be narrower than the choice (untap offers only
+        // tapped permanents, so an already-untapped pick is absent), and
+        // retargeting the next copy changes the board. Same-name substitution
+        // stays for an UNBOUND ref, where gorge's ordinal counts live objects
+        // in creation order and Forge numbers a different copy.
+        if (refs.boundId(ref) != null) {
+            return null;
         }
         RefTable.Ref r = RefTable.parse(ref);
         for (T o : opts) {
