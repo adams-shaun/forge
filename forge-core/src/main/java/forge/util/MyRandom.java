@@ -37,6 +37,13 @@ public class MyRandom {
     /**
      * Every Random method (nextInt, nextBoolean, shuffle, ...) funnels through next(bits).
      * The draw counter lives on the stream, so a game's undo detection only sees its own draws.
+     * A bounded draw must reach
+     * the delegate AS a bounded draw: {@link #next(int)} has no bound
+     * parameter, so routing {@code nextInt(bound)} through it would call the
+     * delegate's unbounded {@code nextInt()} and a generator that only
+     * overrides the bounded method (the oracle driver's ForcedDieRandom, a
+     * test's scripted source) would never see the bound. Both bounded forms
+     * are forwarded directly and counted once.
      */
     private static final class CountingRandom extends Random {
         private final Random delegate;
@@ -46,6 +53,16 @@ public class MyRandom {
             calls.incrementAndGet();
             if (TRACE) { trace(); }
             return delegate.nextInt() >>> (32 - bits);
+        }
+        @Override public int nextInt(int bound) {
+            calls.incrementAndGet();
+            if (TRACE) { trace(); }
+            return delegate.nextInt(bound);
+        }
+        @Override public int nextInt(int origin, int bound) {
+            calls.incrementAndGet();
+            if (TRACE) { trace(); }
+            return delegate.nextInt(origin, bound);
         }
         @Override public void setSeed(long seed) {
             if (delegate != null) delegate.setSeed(seed);   // null during super(0)
