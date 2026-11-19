@@ -2,7 +2,6 @@
 package forge.oracle;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Random;
 import java.util.zip.CRC32;
 
 import forge.util.MyRandom;
@@ -13,8 +12,12 @@ import forge.util.MyRandom;
 public final class ForgeEngine implements ScenarioReplay.Engine {
     @Override
     public ResultRow replayOnce(Request req, boolean strict) {
-        MyRandom.setRandom(new Random(seed(req.id)));
-        return new StepMachine(req, strict).run();
+        // The same seeded generator, plus the tape's die results: the step
+        // machine arms it per step, so a card whose effect rolls a die (Ebony
+        // Fly's d6) gets the live game's natural roll instead of its own.
+        ForcedDieRandom random = new ForcedDieRandom(seed(req.id), req);
+        MyRandom.setRandom(random);
+        return new StepMachine(req, strict, random).run();
     }
 
     public static long seed(String id) {

@@ -84,14 +84,22 @@ public final class StepMachine {
     int actedHostId;
     List<String> stepTargets = new ArrayList<>();
     RuntimeException failure;
+    /** The seeded random source, armed with a step's recorded die rolls;
+     * null in the card-database-free tests, which need no force. */
+    final ForcedDieRandom dice;
 
     public StepMachine(Request req, boolean strict) {
+        this(req, strict, null);
+    }
+
+    public StepMachine(Request req, boolean strict, ForcedDieRandom dice) {
         this.req = req;
         this.strict = strict;
         this.dq = new DecisionQueue(req.decisions);
         this.steps = req.steps();
         this.targetTurn = req.turn();
         this.seats = new Player[req.seatCount()];
+        this.dice = dice;
     }
 
     public boolean strict() {
@@ -288,6 +296,12 @@ public final class StepMachine {
             if (stepIdx >= steps.size()) {
                 done = true;
                 return null;
+            }
+            if (dice != null) {
+                // The step's recorded rolls are consumed while its action (or
+                // the stack it left behind) resolves; arm once, before the
+                // first priority of the step.
+                dice.arm(stepIdx);
             }
             JsonObject st = steps.get(stepIdx).getAsJsonObject();
             String op = Request.str(st, "op");
