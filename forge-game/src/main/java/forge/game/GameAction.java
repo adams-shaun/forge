@@ -1126,6 +1126,12 @@ public class GameAction {
                     staticAbilities.add(stAb);
                 }
             }
+            // CR 613.6, 702.73a: Changeling's layer-4 CDA survives an immediate "loses all abilities"
+            for (StaticAbility stAb : co.getTypeStaticsLostWithKeywords()) {
+                if (stAb.checkMode(StaticAbilityMode.Continuous) && stAb.zonesCheck()) {
+                    staticAbilities.add(stAb);
+                }
+            }
             if (!co.getStaticCommandList().isEmpty()) {
                 staticList.add(co);
             }
