@@ -560,10 +560,22 @@ final class SetupBuilder {
      * counters field is stated net of those grants, so no counter the move
      * applied is removed. A tap an entry replacement applies is undone because
      * the tapped field re-states it. Returns the permanent on the battlefield,
-     * which may be a new object. */
+     * which may be a new object.
+     *
+     * <p>A {@code back_face} request whose resolved face is itself an instant or
+     * sorcery is stated straight onto the battlefield, as the attached-Aura
+     * path and gorge's setup MoveZone fold do: setup restates a board, and CR
+     * 307.4 (which makes a real {@code GameAction.moveTo} refuse the card and
+     * leave it in hand) governs a game, not the fixture. This keeps the same
+     * rule for both face layouts, front-spell/back-permanent and
+     * front-permanent/back-spell.</p> */
     static Card putOntoBattlefield(Game game, Player p, Card c, boolean backFace) {
         if (backFace) {
             flipToBack(c, c.getName());
+            if (c.isInstant() || c.isSorcery()) {
+                p.getZone(ZoneType.Battlefield).add(c);
+                return c;
+            }
         }
         p.getZone(ZoneType.Hand).add(c);
         TriggerHandler th = game.getTriggerHandler();
