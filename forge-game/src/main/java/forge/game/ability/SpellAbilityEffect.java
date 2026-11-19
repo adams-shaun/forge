@@ -403,6 +403,18 @@ public abstract class SpellAbilityEffect {
     }
 
     protected static void registerDelayedTrigger(final SpellAbility sa, String location, final Iterable<Card> crds) {
+        // CR 702.116a: Myriad creates the exile-at-end-of-combat delayed trigger only
+        // "if one or more tokens are created this way". With one opponent and that
+        // opponent defending, ForEach$ OppNonDefendingPlayer is empty and this method
+        // used to register an EndCombat trigger over zero cards, leaving a no-op
+        // ability on the stack. No cards means there is nothing for the delayed
+        // ability to act on, so do not create it. Every AtEOT caller goes through
+        // this method, which covers the next Myriad carrier and every other
+        // empty-set delayed trigger.
+        if (!crds.iterator().hasNext()) {
+            return;
+        }
+
         boolean intrinsic = sa.isIntrinsic();
         boolean your = location.startsWith("Your");
         boolean combat = location.endsWith("Combat");
