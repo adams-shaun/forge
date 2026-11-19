@@ -37,14 +37,14 @@ import forge.item.PaperToken;
  *     ids, which unbound refs count in, follow gorge's object order; each named
  *     card binds its setup ref.</li>
  * <li>Battlefield placement fires NO entry triggers: ChangesZone and
- *     ChangesZoneAll are suppressed while placing, and so is CounterAdded
- *     while a Saga that setup flips to its back face enters (its chapter
- *     abilities are CounterAdded triggers with Chapter$). A front-face Saga
- *     keeps chapter I (gorge f788f3c31). Every other trigger the placement
- *     causes STAYS live: a planeswalker's entry loyalty counters fire
- *     CounterAdded/CounterAddedOnce triggers on permanents already placed
- *     (Inspired Tethermage watching Ajani Goldmane), as gorge keeps them
- *     (P0-REPORT: suppressing all triggers would drop them). The active
+ *     ChangesZoneAll are suppressed while placing. A Saga keeps its entry
+ *     lore counter and chapter I, front face or back (gorge f788f3c31 and
+ *     setupBackFaceDropsChapter: only a back-face placement whose entering
+ *     face is not itself a Saga has no chapter to fire). Every other trigger
+ *     the placement causes STAYS live: a planeswalker's entry loyalty counters
+ *     fire CounterAdded/CounterAddedOnce triggers on permanents already
+ *     placed (Inspired Tethermage watching Ajani Goldmane), as gorge keeps
+ *     them (P0-REPORT: suppressing all triggers would drop them). The active
  *     player is set before placement, because Forge's TriggerHandler runs no
  *     trigger while there is no active player.</li>
  * <li>Placement keeps every entry counter replacement the scenario's counters
@@ -193,16 +193,19 @@ final class SetupBuilder {
         for (String n : bf) {
             Card c = create(m, n, p);
             m.refs.bind(i, n, c.getId());
+            boolean back = containsName(backFace, n);
             if (auraHost.containsKey(++occurrence)) {
+                // A back-face Aura is added straight to the battlefield (no
+                // GameAction.moveTo to carry the face), so resolve it here.
+                if (back) {
+                    flipToBack(c, n);
+                }
                 p.getZone(ZoneType.Battlefield).add(c);
                 links.put(c, auraHost.get(occurrence));
             } else {
-                c = putOntoBattlefield(m.game, p, c, containsName(backFace, n));
+                c = putOntoBattlefield(m.game, p, c, back);
             }
             unlockNamedDoor(m.game, p, c, n);
-            if (containsName(backFace, n)) {
-                flipToBack(c, n);
-            }
             if (containsName(tapped, n)) {
                 c.setTapped(true);
             }
@@ -544,27 +547,26 @@ final class SetupBuilder {
         return -1;
     }
 
-    /** Hand first, then a real move to the battlefield, so every entry counter
-     * replacement the setup contract restates is applied: the ones gorge's
-     * MoveZone grants (a planeswalker's loyalty, a Saga's lore, a Battle's
-     * defense, a K:etbCounter or K:ETBReplacement body, a printed
-     * R:Event$ Moved body such as Tonberry's stun counter) and their
-     * CounterAdded triggers fire. The scenario's counters field is stated net
-     * of those grants, so no counter the move applied is removed; a tap an
-     * entry replacement applies is undone because the tapped field re-states
-     * it, and a back-face Saga loses the front face's lore counter (the
-     * permanent stands on a face with no chapters). Returns the permanent on
-     * the battlefield, which may be a new object. */
+    /** Resolve the back face first, then a real move to the battlefield, so the
+     * move carries the face that stands. A modal DFC whose front is an instant
+     * or sorcery cannot enter at all (CR 307.4), so flipping after the move
+     * left it in hand (CR 712.8f); flipping first also makes the entering
+     * face's own entry replacements and counters apply (a back-face Saga's
+     * entry lore and chapter I, or Sea Gate, Reborn's Moved replacement), as
+     * gorge's stageBackFace placement does. Every entry counter replacement the
+     * setup contract restates is applied by that move (loyalty, a Saga's lore,
+     * a Battle's defense, a K:etbCounter or K:ETBReplacement body, a printed
+     * R:Event$ Moved body such as Tonberry's stun counter); the scenario's
+     * counters field is stated net of those grants, so no counter the move
+     * applied is removed. A tap an entry replacement applies is undone because
+     * the tapped field re-states it. Returns the permanent on the battlefield,
+     * which may be a new object. */
     static Card putOntoBattlefield(Game game, Player p, Card c, boolean backFace) {
-        p.getZone(ZoneType.Hand).add(c);
-        // gorge f788f3c31: a front-face Saga keeps its entry chapter I trigger
-        // (XMage's addCard adds the lore counter and chapter I fires); only a
-        // back-face placement, a permanent with no chapter abilities, drops it.
-        boolean saga = backFace && c.getType().hasSubtype("Saga");
-        TriggerHandler th = game.getTriggerHandler();
-        if (saga) {
-            th.suppressMode(TriggerType.CounterAdded);
+        if (backFace) {
+            flipToBack(c, c.getName());
         }
+        p.getZone(ZoneType.Hand).add(c);
+        TriggerHandler th = game.getTriggerHandler();
         // A tap an entry replacement applies is not an event of the scenario.
         th.suppressMode(TriggerType.Taps);
         Card moved;
@@ -572,25 +574,11 @@ final class SetupBuilder {
             moved = game.getAction().moveTo(ZoneType.Battlefield, c, null, null);
         } finally {
             th.clearSuppression(TriggerType.Taps);
-            if (saga) {
-                th.clearSuppression(TriggerType.CounterAdded);
-            }
         }
         if (moved == null || !moved.isInPlay()) {
             moved = c;
         }
         moved.setTapped(false);
-        // The move has already applied every entry counter replacement
-        // (K:etbCounter, K:ETBReplacement and a printed R:Event$ Moved body:
-        // Tonberry's stun counter). gorge's placement re-runs those grants,
-        // and the scenario's counters field states only the counters beyond
-        // them (lower setupCounters), so every counter the move granted stays.
-        // The one entry counter setup does not re-state is a back-face Saga's
-        // front-face lore counter: the permanent stands on a face with no
-        // chapters.
-        if (saga) {
-            moved.setCounters(CounterEnumType.LORE, 0);
-        }
         return moved;
     }
 
@@ -617,22 +605,17 @@ final class SetupBuilder {
         }
     }
 
-    /** gorge's setup FlipFace: the permanent, already placed on its front face,
-     * now stands on its back face. Not a transform action, so no trigger. */
+    /** gorge's setup FlipFace: the card stands on its back face before the
+     * placement move. Not a transform action, so no trigger; the move then
+     * enters the back face itself (its own entry replacements, and a Saga's
+     * entry lore counter and chapter I, are the real move's, as gorge's
+     * stageBackFace placement). */
     static void flipToBack(Card c, String name) {
         if (!c.isDoubleFaced() && !c.isModal()) {
             throw new HarnessError("setup back_face: " + name + " is not double-faced");
         }
         c.setState(CardStateName.Backside, true);
         c.setBackSide(true);
-        // gorge enters a back face that is a Saga with chapters (a Summon) with
-        // its lore counter, as a front-face Saga enters; the placement here ran
-        // on the front face, so the counter is stated now. No trigger: setup
-        // restates the board.
-        if (c.getType().hasSubtype("Saga") && c.getTriggers().stream().anyMatch(t -> t.hasParam("Chapter"))
-                && c.getCounters(CounterEnumType.LORE) == 0) {
-            c.setCounters(CounterEnumType.LORE, 1);
-        }
     }
 
     static void addCounters(Game game, Player p, Card c, Map<String, Integer> kinds) {
