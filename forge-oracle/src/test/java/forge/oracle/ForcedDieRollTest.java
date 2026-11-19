@@ -11,6 +11,8 @@ import org.testng.annotations.Test;
 
 import com.google.gson.JsonParser;
 
+import forge.util.MyRandom;
+
 /**
  * The die force is step-scoped and side-matched: a step armed with a recorded
  * d6 returns the tape's natural result, a step with no record keeps Forge's
@@ -86,5 +88,27 @@ public class ForcedDieRollTest {
         r.arm(1);
         assertEquals(r.nextInt(100), new Random(7).nextInt(100));
         assertNotEquals(ForgeEngine.seed("a"), ForgeEngine.seed("b"), "the seed still names the scenario");
+    }
+
+    @Test
+    public void productionSetRandomForwardsTheBound() {
+        // ForgeEngine.replayOnce installs the generator with MyRandom.setRandom,
+        // and Forge's RollDiceEffect draws with MyRandom.getRandom().nextInt(sides).
+        // MyRandom's counting wrapper must forward that bounded call; routing it
+        // through next(bits) would call the delegate's unbounded nextInt() and
+        // this force would never run at the real call site.
+        Random previous = MyRandom.getRandom();
+        try {
+            Request rq = req("[{\"step\":1,\"seat\":0,\"sides\":6,\"natural\":3,\"result\":3}]");
+            ForcedDieRandom r = new ForcedDieRandom(7, rq);
+            MyRandom.setRandom(r);
+            r.arm(1);
+            assertEquals(MyRandom.getRandom().nextInt(6) + 1, 3,
+                    "the production MyRandom path must reach ForcedDieRandom.nextInt(bound)");
+            assertEquals(MyRandom.getRandom().nextInt(6), new Random(7).nextInt(6),
+                    "the unarmed draw still falls through to the seeded generator");
+        } finally {
+            MyRandom.setRandom(previous);
+        }
     }
 }
