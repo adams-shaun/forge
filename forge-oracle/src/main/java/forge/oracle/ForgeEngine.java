@@ -2,9 +2,6 @@
 package forge.oracle;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
-import java.util.List;
-import java.util.Random;
 import java.util.zip.CRC32;
 
 import forge.util.MyRandom;
@@ -15,25 +12,13 @@ import forge.util.MyRandom;
 public final class ForgeEngine implements ScenarioReplay.Engine {
     @Override
     public ResultRow replayOnce(Request req, boolean strict) {
-        MyRandom.setRandom(new ForcedFlips(seed(req.id), req.forcedFlips()));
-        return new StepMachine(req, strict).run();
-    }
-
-    /** A coin flip is Forge's only use of nextBoolean, so the recorded game's
-     * outcomes go there, in order; once they run out the flips are Forge's. */
-    static final class ForcedFlips extends Random {
-        private final ArrayDeque<Boolean> wins;
-
-        ForcedFlips(long seed, List<Boolean> wins) {
-            super(seed);
-            this.wins = new ArrayDeque<>(wins);
-        }
-
-        @Override
-        public boolean nextBoolean() {
-            Boolean w = wins == null ? null : wins.poll();
-            return w != null ? w : super.nextBoolean();
-        }
+        // The same seeded generator, plus the tape's die results and coin
+        // flips: the step machine arms the dice per step, so a card whose
+        // effect rolls a die (Ebony Fly's d6) gets the live game's natural
+        // roll instead of its own, and the recorded flips come out in order.
+        ForcedDieRandom random = new ForcedDieRandom(seed(req.id), req);
+        MyRandom.setRandom(random);
+        return new StepMachine(req, strict, random).run();
     }
 
     public static long seed(String id) {

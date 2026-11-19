@@ -102,6 +102,48 @@ public final class Request {
         return x != null && x.isJsonPrimitive() ? x.getAsString() : "";
     }
 
+    /**
+     * The die rolls the item records for step i, in log order, each as
+     * {@code {sides, natural}}. The Go request emits them as
+     * {@code die_rolls: [{step, seat, sides, natural, result}]}; a follower
+     * forces the NATURAL result and applies its own modifier, so the seat and
+     * the modified result are not read here. A malformed entry names no
+     * roll and is skipped, exactly as the item's other side fields are
+     * read leniently.
+     */
+    public List<int[]> dieRolls(int i) {
+        List<int[]> out = new ArrayList<>();
+        JsonElement e = item == null ? null : item.get("die_rolls");
+        if (e == null || !e.isJsonArray() || i < 0) {
+            return out;
+        }
+        for (JsonElement x : e.getAsJsonArray()) {
+            if (x == null || !x.isJsonObject()) {
+                continue;
+            }
+            JsonObject r = x.getAsJsonObject();
+            int step = intOr(r, "step", -1);
+            int sides = intOr(r, "sides", 0);
+            int natural = intOr(r, "natural", 0);
+            if (step == i && sides > 1 && natural >= 1 && natural <= sides) {
+                out.add(new int[] {sides, natural});
+            }
+        }
+        return out;
+    }
+
+    private static int intOr(JsonObject o, String k, int fallback) {
+        JsonElement e = o == null ? null : o.get(k);
+        if (e == null || !e.isJsonPrimitive() || !e.getAsJsonPrimitive().isNumber()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(e.getAsString());
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
     /** The scenario turn, exactly as the XMage driver's scenarioTurn reads it
      * (ScenarioReplay.java:566-584): absent or null is 1; otherwise an
      * integer JSON number in 1..100, never a truncated fraction or a wrapped
