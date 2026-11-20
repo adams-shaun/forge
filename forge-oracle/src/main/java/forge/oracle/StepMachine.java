@@ -83,6 +83,12 @@ public final class StepMachine {
     String castMode = "";
     int actedHostId;
     List<String> stepTargets = new ArrayList<>();
+    /** Seats the sidecar names as the decider of a play/cast that happens
+     * while a spell resolves (DecisionQueue.isPlayChoice). gorge poses no
+     * per-source mana ask for a controlled player's play, so the payment hook
+     * may finish that cost from the decider's own sources. Empty outside such
+     * a step. */
+    final Set<Integer> playPayers = new HashSet<>();
     RuntimeException failure;
     /** The seeded random source, armed with a step's recorded die rolls;
      * null in the card-database-free tests, which need no force. */
@@ -335,6 +341,7 @@ public final class StepMachine {
                         continue;
                     }
                     acted = true;
+                    payingManaSources(p);
                     return null; // pass
                 case "pass":
                     // gorge's pass answers exactly one priority decision of the
@@ -549,6 +556,7 @@ public final class StepMachine {
         actedSa = null;
         castMode = "";
         stepTargets = new ArrayList<>();
+        playPayers.clear();
     }
 
     private List<SpellAbility> act(JsonObject st, String op, Player p) {
@@ -592,8 +600,21 @@ public final class StepMachine {
     /** gorge activated these mana sources inside the payment window (pick
      * kind "activate", object_picks naming the source). The driver pays from
      * the pool only, so it activates them first, at priority: the mana floats
-     * into the pool and the cast that follows spends it. Same end state. */
+     * into the pool and the cast that follows spends it. Same end state.
+     *
+     * <p>Also arms the payment hook for a play/cast the sidecar names for this
+     * step (a "play" decision): a controlled player's Play happens inside the
+     * resolution, and gorge logs no per-source activation for it, so
+     * {@link ScriptedController#applyManaToCost} must be allowed to finish the
+     * cost from that player's own sources. Both the resolve arm and the
+     * cast/activate arm call this, so every step that can host such a cast is
+     * covered.</p> */
     private void payingManaSources(Player p) {
+        for (Decision d : dq.all()) {
+            if (!d.isConsumed() && d.step == stepIdx && DecisionQueue.isPlayChoice(d) && playPayers.add(d.seat)) {
+                note("play-choice payer step " + stepIdx + ": p" + d.seat);
+            }
+        }
         while (true) {
             Decision d = take(SnapshotWriter.seatOf(seats, p), x -> x.pickKinds.size() == 1 && x.pickKinds.get(0).equals("activate") && !x.objectPicks.isEmpty());
             if (d == null) {
@@ -614,6 +635,27 @@ public final class StepMachine {
             ma.setActivatingPlayer(p);
             boolean ok = forge.game.player.PlaySpellAbility.playSpellAbility(p.getController(), p, ma);
             note("payment source step " + stepIdx + ": " + d.objectPicks.get(0) + " activated=" + ok + " pool=" + p.getManaPool().totalMana());
+        }
+    }
+
+    /** The sidecar named p as the decider of a play/cast in this step, and its
+     * cost may be finished from p's own sources. */
+    boolean isPlayPayer(Player p) {
+        return playPayers.contains(SnapshotWriter.seatOf(seats, p));
+    }
+
+    /** The play-choice decision authorised this step's payment, whether the
+     * floating pool covered the cost or the driver finished it from p's own
+     * sources. Forge's PlayEffect calls playSaFromPlayEffect directly and
+     * never asks it, so using it here consumes it, exactly as the XMage driver
+     * consumes the ask it answers. */
+    void consumePlayChoice(Player p) {
+        int seat = SnapshotWriter.seatOf(seats, p);
+        for (Decision d : dq.all()) {
+            if (!d.isConsumed() && d.step == stepIdx && d.seat == seat && DecisionQueue.isPlayChoice(d)) {
+                d.consumed = true;
+                note("play-choice decision step " + stepIdx + " consumed: " + d.picks);
+            }
         }
     }
 
