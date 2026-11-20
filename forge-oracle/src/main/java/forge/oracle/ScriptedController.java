@@ -82,6 +82,9 @@ import forge.util.collect.FCollectionView;
 public class ScriptedController extends PlayerControllerAi {
     final StepMachine m;
     final int seat;
+    /** Guards {@link #payFromOwnSources} against a mana ability that itself
+     * has a mana cost (no basic land does; a chain would re-enter). */
+    private boolean payingOwnSources;
 
     public ScriptedController(Game game, Player p, LobbyPlayer lp, StepMachine m, int seat) {
         super(game, p, lp);
@@ -406,8 +409,12 @@ public class ScriptedController extends PlayerControllerAi {
         return PlaySpellAbility.payManaCost(this, toPay, costPartMana, sa, player, prompt, matrix, effect);
     }
 
-    /** Pays from the floating pool only: the engine's own exact-colour pass,
-     * then the generic remainder in a fixed WUBRGC order (deterministic, P0 S1). */
+    /** Pays from the floating pool first: the engine's own exact-colour pass,
+     * then the generic remainder in a fixed WUBRGC order (deterministic, P0 S1).
+     * When the sidecar named this player as the decider of a play/cast in the
+     * step (StepMachine.isPlayPayer), a shortfall is finished from that
+     * player's own sources: gorge poses no per-source mana ask for a
+     * controlled player's play, so the driver has to tap them itself. */
     @Override
     public boolean applyManaToCost(ManaCostBeingPaid toPay, SpellAbility ability, String prompt, ManaConversionMatrix matrix, boolean effect) {
         ManaPool pool = player.getManaPool();
@@ -428,6 +435,29 @@ public class ScriptedController extends PlayerControllerAi {
                 pool.tryPayCostWithColor(color, ability, toPay, ability.getPayingMana());
             }
         }
+        payFromPool(toPay, ability);
+        if (m.isPlayPayer(player) && !payingOwnSources) {
+            if (!toPay.isPaid()) {
+                payingOwnSources = true;
+                try {
+                    payFromOwnSources(toPay, ability);
+                } finally {
+                    payingOwnSources = false;
+                }
+            }
+            // The decision authorised this payment whether the pool covered it
+            // or the sources above finished it; consume it on both paths so a
+            // pool-covered play cannot leave it behind as a leftover.
+            m.consumePlayChoice(player);
+        }
+        m.note("pay mana: pool " + before + " -> " + pool.totalMana() + ", paid=" + toPay.isPaid() + " for " + ability.getHostCard().getName());
+        return toPay.isPaid();
+    }
+
+    /** The engine's own exact-colour pass, then the generic remainder in the
+     * fixed WUBRGC order (deterministic, P0 S1). */
+    private void payFromPool(ManaCostBeingPaid toPay, SpellAbility ability) {
+        ManaPool pool = player.getManaPool();
         pool.payManaCostFromPool(toPay, ability, false, ability.getPayingMana());
         while (!toPay.isPaid() && !pool.isEmpty()) {
             boolean found = false;
@@ -441,7 +471,53 @@ public class ScriptedController extends PlayerControllerAi {
                 break;
             }
         }
-        m.note("pay mana: pool " + before + " -> " + pool.totalMana() + ", paid=" + toPay.isPaid() + " for " + ability.getHostCard().getName());
+    }
+
+    /** Finish a play/cast cost the pool cannot cover from the payer's own
+     * sources. The battlefield is walked in zone order and the first playable
+     * mana ability whose predicted mana the remaining cost can use is
+     * activated, one at a time, until the pool pays the cost -- no AI choice
+     * and no map order reaches the result. */
+    private boolean payFromOwnSources(ManaCostBeingPaid toPay, SpellAbility ability) {
+        ManaPool pool = player.getManaPool();
+        int guard = 0;
+        while (!toPay.isPaid() && guard++ < 64) {
+            payFromPool(toPay, ability);
+            if (toPay.isPaid()) {
+                return true;
+            }
+            SpellAbility use = null;
+            for (Card c : player.getCardsIn(ZoneType.Battlefield)) {
+                for (SpellAbility ma : c.getManaAbilities()) {
+                    ma.setActivatingPlayer(player);
+                    if (!ma.canPlay()) {
+                        continue;
+                    }
+                    String produced = forge.ai.ComputerUtilMana.predictMana(ma, player, ManaCostShard.GENERIC)
+                            .replace(" ", "");
+                    if (produced.isEmpty()) {
+                        continue;
+                    }
+                    ManaCostBeingPaid probe = new ManaCostBeingPaid(toPay);
+                    if (probe.ai_payMana(produced, pool)) {
+                        use = ma;
+                        break;
+                    }
+                }
+                if (use != null) {
+                    break;
+                }
+            }
+            if (use == null) {
+                return false;
+            }
+            boolean ok = PlaySpellAbility.playSpellAbility(this, player, use);
+            m.note("play-choice source step " + m.step() + ": " + use.getHostCard().getName()
+                    + " activated=" + ok + " pool=" + pool.totalMana());
+            if (!ok) {
+                return false;
+            }
+        }
         return toPay.isPaid();
     }
 
