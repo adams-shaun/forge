@@ -183,8 +183,8 @@ public abstract class SpellAbilityAi extends SpellAbilityEffect {
         }
 
         // a mandatory SA without target candidates doesn't need to go any deeper
-        if (sa.usesTargeting() && mandatory && sa.getTargetRestrictions().getNumCandidates(sa) == 0) {
-            return sa.isTargetNumberValid();
+        if (mandatory && !ComputerUtilAbility.isFullyTargetable(sa)) {
+            return false;
         }
 
         return doTriggerNoCostWithSubs(aiPlayer, sa, mandatory).willingToPlay();
@@ -439,6 +439,26 @@ public abstract class SpellAbilityAi extends SpellAbilityEffect {
                 if (ComputerUtilCard.checkNeedsToPlayReqs(copy, kickedSaCopy) != AiPlayDecision.WillPlay) {
                     // don't choose kickers we don't want to play
                     continue;
+                }
+                // Bloodchief's Thirst: the kicker only widens the choice of target, so it is paid for when the plain
+                // spell has nothing to hit (#4443), not to kill a 2-mana creature the plain spell kills too
+                if (chosen.getHostCard().hasSVar("AIKickOnlyWithoutBaseTarget") && payer.getController() instanceof PlayerControllerAi) {
+                    // asked of the targeting rules directly: the plain spell hits something the opponent controls
+                    final SpellAbility plain = chosen.copy();
+                    plain.setActivatingPlayer(payer);
+                    boolean plainWorks = false;
+                    if (plain.usesTargeting()) {
+                        for (final Card c : payer.getOpponents().getCardsIn(ZoneType.Battlefield)) {
+                            if (plain.canTarget(c)) {
+                                plainWorks = true;
+                                break;
+                            }
+                        }
+                    }
+                    plain.resetTargets();
+                    if (plainWorks) {
+                        continue;
+                    }
                 }
             }
 
