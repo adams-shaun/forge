@@ -179,8 +179,9 @@ public class RecordingControllerTest {
 
     @Test
     public void theSameSeedWritesTheSameBytes() {
-        String a = record(request(11, ""));
-        String b = record(request(11, ""));
+        // Seed 1: seed 11's game outlasts max_turns on Card-Forge master of 2026-11-20.
+        String a = record(request(1, ""));
+        String b = record(request(1, ""));
         assertTrue(a.length() > 1000, "a real log");
         assertEquals(a, b);
     }
@@ -255,7 +256,9 @@ public class RecordingControllerTest {
     @Test
     public void everyLineCarriesTheReadersGoldenKeys() {
         java.util.Map<String, Integer> seen = new java.util.TreeMap<>();
-        for (JsonObject o : lines(record(request(7, "")))) {
+        // Seed 2: on Card-Forge master of 2026-11-20 seed 7's AI never offers a
+        // block; seed 2's game reaches every key the reader checks.
+        for (JsonObject o : lines(record(request(2, "")))) {
             String t = o.get("t").getAsString();
             have(seen, t, o);
             if (t.equals("header")) {
