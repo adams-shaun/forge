@@ -299,6 +299,25 @@ public final class StepMachine {
         return null;
     }
 
+    /** Consumes an empty object-choice answer only when it is the seat's next
+     * decision at this step. A non-empty pick there belongs to the ask that
+     * follows it (Dawnbreak Reclaimer's empty graveyard card ask, then
+     * ChoosePlayer's p1), so it is left queued for its own ask. */
+    Decision takeEmptyChoice(int seat) {
+        for (int st : decisionSteps()) {
+            Decision d = dq.peekHead(st, seat);
+            if (d == null) {
+                continue;
+            }
+            if (DecisionQueue.isEmptyChoice(d)) {
+                d.consumed = true;
+                return d;
+            }
+            return null;
+        }
+        return null;
+    }
+
     /** The first unconsumed matching decision, without consuming it. */
     Decision peek(int seat, Predicate<Decision> match) {
         for (int st : decisionSteps()) {
@@ -1516,7 +1535,7 @@ public final class StepMachine {
         return d == null ? null : DecisionQueue.payOf(d);
     }
 
-    List<AbilitySub> chooseModes(int seat, SpellAbility sa, List<AbilitySub> possible, int min, int num) {
+    List<AbilitySub> chooseModes(int seat, SpellAbility sa, List<AbilitySub> possible, int min, int num, boolean allowRepeat) {
         Decision d = take(seat, DecisionQueue::isMode);
         if (d == null) {
             return null;
@@ -1525,7 +1544,12 @@ public final class StepMachine {
         for (String label : d.picks) {
             AbilitySub hit = null;
             for (AbilitySub sub : possible) {
-                if (out.contains(sub)) {
+                // CR 700.2d: a "you may choose the same mode more than once"
+                // card (CharmEffect CanRepeatModes) may use one mode for
+                // several slots. Forge's own controller returns duplicates
+                // when allowRepeat, so only the non-repeat ask consumes a
+                // mode from its list.
+                if (!allowRepeat && out.contains(sub)) {
                     continue;
                 }
                 if (sameText(sub.getParam("SpellDescription"), label) || sameText(sub.getDescription(), label)) {
@@ -1684,6 +1708,17 @@ public final class StepMachine {
     <T extends GameEntity> List<T> pickObjects(int seat, Iterable<T> options, int min, int max, String what) {
         List<T> opts = new ArrayList<>();
         options.forEach(opts::add);
+        if (opts.isEmpty()) {
+            // CR 608.2c/700.2: a choice among zero objects is no choice. gorge
+            // logs nothing for it, so its next decision is the ask that
+            // follows (Dawnbreak Reclaimer's empty card ask, then ChoosePlayer's
+            // p1). Consume only an explicit empty answer that is next; never a
+            // non-empty pick belonging to the following ask.
+            Decision empty = takeEmptyChoice(seat);
+            note("pick step " + stepIdx + " " + what + ": 0 options; "
+                    + (empty != null ? "consumed gorge's empty pick" : "no gorge pick to consume"));
+            return new ArrayList<>();
+        }
         if (carryStep == stepIdx && carrySeat == seat && (!carryRefs.isEmpty() || carryOpen)) {
             // The rest of one gorge pick that Forge asks for one card at a time
             // (a search "up to two" is one gorge decision, two Forge asks).
@@ -1763,9 +1798,6 @@ public final class StepMachine {
             // 0..0 admits only the empty pick (Death Cloud cast with X = 0
             // offers its permanents for a sacrifice of none): every option is
             // legal to leave, so the empty answer is forced, not unscripted.
-            return new ArrayList<>();
-        }
-        if (opts.isEmpty()) {
             return new ArrayList<>();
         }
         if (opts.size() <= min) {
@@ -2003,8 +2035,18 @@ public final class StepMachine {
         String t = s;
         if (host != null && !host.isEmpty()) {
             t = t.replace(host, "cardname");
+            // Forge substitutes the card's nickname (the part before the
+            // first comma) into trigger text, while gorge's label keeps the
+            // raw NICKNAME token (or the full name). Fold all three to one
+            // placeholder: "When NICKNAME enters" == "When Uro enters".
+            int comma = host.indexOf(',');
+            if (comma > 0) {
+                t = t.replace(host.substring(0, comma), "nickname");
+            }
         }
-        return t.toLowerCase(java.util.Locale.ROOT).replace("cardname", "~").replaceAll("[^a-z0-9~]", "");
+        t = t.replace("NICKNAME", "nickname");
+        return t.toLowerCase(java.util.Locale.ROOT).replace("cardname", "~").replace("nickname", "~")
+                .replaceAll("[^a-z0-9~]", "");
     }
 
     private static int triggerScore(String label, SpellAbility sa) {

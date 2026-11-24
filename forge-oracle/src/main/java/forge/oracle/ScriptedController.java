@@ -294,7 +294,7 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public List<AbilitySub> chooseModeForAbility(SpellAbility sa, List<AbilitySub> possible, int min, int num, boolean allowRepeat) {
-        List<AbilitySub> picked = m.chooseModes(seat, sa, possible, min, num);
+        List<AbilitySub> picked = m.chooseModes(seat, sa, possible, min, num, allowRepeat);
         if (picked != null) {
             return picked;
         }
