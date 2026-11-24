@@ -1444,8 +1444,11 @@ public class GameAction {
         boolean orderedNoRegCreats = false;
         boolean orderedSacrificeList = false;
         // A pass with cards in more than one of those lists is one simultaneous
-        // move; this remembers that its union was already put to the owners.
-        boolean orderedSbaDeaths = false;
+        // move; this remembers the cards whose union was already put to the
+        // owners, so a card that survives the move is not asked about again.
+        // It never touches the per-list flags above: a later pass that has a
+        // single multi-card list still runs that list's own ask.
+        CardCollection orderedSbaDeaths = new CardCollection();
 
         for (int q = 0; q < 9; q++) {
             boolean checkAgain = false;
@@ -1628,12 +1631,22 @@ public class GameAction {
                         combinedSba.add(c);
                     }
                 }
-                if (combinedSba.size() > 1 && !orderedSbaDeaths) {
-                    combinedSba = (CardCollection) GameActionUtil.orderCardsByTheirOwners(game, combinedSba, ZoneType.Graveyard, null);
-                    orderedSbaDeaths = true;
-                    orderedNoRegCreats = true;
-                    orderedDesCreats = true;
-                    orderedSacrificeList = true;
+                CardCollection toOrder = new CardCollection();
+                for (Card c : combinedSba) {
+                    if (!orderedSbaDeaths.contains(c)) {
+                        toOrder.add(c);
+                    }
+                }
+                if (toOrder.size() > 1) {
+                    CardCollection ordered = (CardCollection) GameActionUtil.orderCardsByTheirOwners(game, toOrder, ZoneType.Graveyard, null);
+                    orderedSbaDeaths.addAll(ordered);
+                    // cards already ordered in an earlier pass keep their place after the new ones
+                    for (Card c : combinedSba) {
+                        if (!ordered.contains(c)) {
+                            ordered.add(c);
+                        }
+                    }
+                    combinedSba = ordered;
                 }
             }
 

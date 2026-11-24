@@ -45,6 +45,11 @@ public class SbaGraveyardOrderTest {
     private static final String WALKER = "Name:Phyrexian Walker\nManaCost:0\nTypes:Artifact Creature Construct\nPT:0/3\nOracle:";
     private static final String TIBALT = "Name:Tibalt, the Fiend-Blooded\nManaCost:1 R R\nTypes:Planeswalker Tibalt\nLoyalty:3\nOracle:";
 
+    private static final String LORD = "Name:Test Lord\nManaCost:0\nTypes:Creature Elf\nPT:1/1\n"
+            + "S:Mode$ Continuous | Affected$ Creature.Other+YouCtrl | AddPower$ 1 | AddToughness$ 1 | Description$ Other creatures you control get +1/+1.\nOracle:";
+    private static final String DORK_A = "Name:Dork A\nManaCost:0\nTypes:Creature Elf\nPT:0/0\nOracle:";
+    private static final String DORK_B = "Name:Dork B\nManaCost:0\nTypes:Creature Elf\nPT:0/0\nOracle:";
+
     @BeforeClass
     public void boot() {
         Bootstrap.init(TestRes.res());
@@ -138,5 +143,40 @@ public class SbaGraveyardOrderTest {
                 List.of("Phyrexian Walker", "Tibalt, the Fiend-Blooded"),
                 "the owner's answer, not the list order, decides the graveyard");
         assertTrue(p1.getCardsIn(ZoneType.Battlefield).isEmpty(), "both permanents left the battlefield");
+    }
+
+    /**
+     * The mixed batch must not suppress the ordinary per-list ask of a later pass
+     * in the same checkStateEffects call: the pass-0 union is [0-loyalty
+     * planeswalker, lethal-damage lord]; the lord's death then drops two 1/1
+     * creatures to 0/0, which are one noRegCreats list of two cards and still get
+     * their own CR 404.3 ask.
+     */
+    @Test
+    public void laterPassWithOneMultiCardListStillAsks() {
+        Lobby[] lobbies = {new Lobby("p0"), new Lobby("p1")};
+        List<RegisteredPlayer> players = new ArrayList<>();
+        for (Lobby lobby : lobbies) {
+            players.add(new RegisteredPlayer(new Deck()).setPlayer(lobby));
+        }
+        GameRules rules = new GameRules(GameType.Constructed);
+        Game game = new Game(players, rules, new Match(rules, players, "sba-order-two-pass"));
+        Player p1 = game.getPlayers().get(1);
+
+        Card lord = onBattlefield(game, p1, LORD, 1);
+        onBattlefield(game, p1, TIBALT, 2);
+        onBattlefield(game, p1, DORK_A, 3);
+        onBattlefield(game, p1, DORK_B, 4);
+        game.getAction().checkStaticAbilities();
+        lord.setDamage(1); // lethal on the 1/1 lord; the dorks are 1/1 only while it lives
+
+        game.getAction().checkStateEffects(true);
+
+        List<List<String>> asks = lobbies[1].controller.asks;
+        assertEquals(asks.size(), 2, "pass 0 asks once for the mixed batch, pass 1 asks once for the two dorks: " + asks);
+        assertEquals(Set.copyOf(asks.get(0)), Set.of("Test Lord", "Tibalt, the Fiend-Blooded"));
+        assertEquals(Set.copyOf(asks.get(1)), Set.of("Dork A", "Dork B"));
+        assertTrue(p1.getCardsIn(ZoneType.Battlefield).isEmpty(), "everything left the battlefield");
+        assertEquals(p1.getCardsIn(ZoneType.Graveyard).size(), 4);
     }
 }
