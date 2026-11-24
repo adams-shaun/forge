@@ -30,6 +30,7 @@ import forge.game.ability.AbilityFactory;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
+import forge.game.card.CounterEnumType;
 import forge.game.card.CounterType;
 import forge.game.mana.Mana;
 import forge.game.phase.PhaseHandler;
@@ -737,6 +738,17 @@ public final class StepMachine {
             }
             return;
         }
+        if (isSuspendAbility(actedSa)) {
+            // Suspend from hand is a special action (CR 702.62a, 116.2f): it uses no stack, the
+            // card is exiled with its time counters.
+            Card sc = game.findById(actedHostId);
+            if (sc == null || !sc.isInZone(ZoneType.Exile) || sc.getCounters(CounterEnumType.TIME) < 1) {
+                throw new HarnessError("step " + stepIdx + " (suspend) " + Request.str(st, "card") + " was not suspended");
+            }
+            note("suspend step " + stepIdx + ": " + Request.str(st, "card") + " exiled with "
+                    + sc.getCounters(CounterEnumType.TIME) + " time counters");
+            return;
+        }
         boolean wantSpell = op.equals("cast");
         for (SpellAbilityStackInstance si : game.getStack()) {
             Card src = si.getSourceCard();
@@ -863,6 +875,14 @@ public final class StepMachine {
             }
             throw new HarnessError("cast_mode plot: " + c.getName() + " has no plot ability");
         }
+        if (mode.equals("suspend")) {
+            for (SpellAbility sa : c.getSpellAbilities()) {
+                if (isSuspendAbility(sa)) {
+                    return sa;
+                }
+            }
+            throw new HarnessError("cast_mode suspend: " + c.getName() + " has no suspend ability");
+        }
         java.util.function.Predicate<SpellAbility> want;
         switch (mode) {
             case "adventure_alt": want = sa -> sa.isSpell() && sa.isAdventure(); break;
@@ -880,6 +900,14 @@ public final class StepMachine {
             }
         }
         throw new HarnessError("cast_mode " + mode + ": " + c.getName() + " offers no such cast in Forge");
+    }
+
+    /** Whether sa is the Suspend special action of a card in hand (CR 702.62a): the
+     * non-spell ability CardFactoryUtil builds for K:Suspend:N:cost, which exiles the card with
+     * its time counters and uses no stack (CR 116.2f). */
+    static boolean isSuspendAbility(SpellAbility sa) {
+        return sa != null && !sa.isSpell() && sa.getKeyword() != null
+                && sa.getKeyword().getKeyword() == forge.game.keyword.Keyword.SUSPEND;
     }
 
     /** Whether cast_mode elects this optional cost (kicker, buyback, entwine). */
