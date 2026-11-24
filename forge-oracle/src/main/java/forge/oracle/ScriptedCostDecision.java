@@ -212,9 +212,17 @@ public class ScriptedCostDecision extends AiCostDecision {
         return choice(cost, super.visit(cost));
     }
 
+    /** Blight N is N -1/-1 counters on ONE creature you control: a one-card
+     * pick like CostSacrifice, not a cost with nothing to choose. */
     @Override
     public PaymentDecision visit(CostBlight cost) {
-        return choice(cost, super.visit(cost));
+        if (cost.payCostFromSource()) {
+            return super.visit(cost);
+        }
+        CardCollectionView list = CardLists.getValidCards(player.getCardsIn(ZoneType.Battlefield),
+                cost.getType().split(";"), player, source, ability);
+        list = CardLists.filter(list, CardPredicates.canReceiveCounters(cost.getCounter()));
+        return cards(cost, list, 1, m.strict() ? null : super.visit(cost));
     }
 
     @Override

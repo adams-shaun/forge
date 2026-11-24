@@ -30,6 +30,7 @@ import forge.game.ability.AbilityFactory;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
+import forge.game.card.CounterType;
 import forge.game.mana.Mana;
 import forge.game.phase.PhaseHandler;
 import forge.game.phase.PhaseType;
@@ -2004,6 +2005,82 @@ public final class StepMachine {
         }
         Integer n = number(d.picks.get(0));
         return n != null && n >= min && n <= max ? n : null;
+    }
+
+    /** gorge logs one counter-kind pick per counter removed: a choose_n with
+     * pick kind "counter" and resume "counter_kind". Forge asks remove-any-type
+     * as chooseCounterType (the type) then chooseNumber (the amount), so the
+     * amount is the run of this step's picks of that type; consume them. */
+    int takeCounterPicks(int seat, CounterType ct, int max) {
+        int n = 0;
+        while (n < max) {
+            Decision d = take(seat, x -> isCounterPick(x, ct));
+            if (d == null) {
+                break;
+            }
+            n++;
+        }
+        if (n > 0) {
+            note("counter step " + stepIdx + ": removed " + n + " " + ct.getName());
+        }
+        return n;
+    }
+
+    /** The next counter-kind pick naming one of Forge's offered types. */
+    CounterType takeCounterKind(int seat, List<CounterType> options) {
+        Decision d = take(seat, x -> {
+            if (!x.kind.equals("choose_n") || x.picks.size() != 1 || !isCounterKind(x)) {
+                return false;
+            }
+            for (CounterType ct : options) {
+                if (isCounterLabel(x.picks.get(0), ct)) {
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (d == null) {
+            return null;
+        }
+        for (CounterType ct : options) {
+            if (isCounterLabel(d.picks.get(0), ct)) {
+                note("counter kind step " + stepIdx + ": " + ct.getName());
+                return ct;
+            }
+        }
+        return null;
+    }
+
+    /** The opponent's two-piles choice: true for the first pile. gorge logs
+     * choose_n resume "twopiles_pick" with the chosen option's kind
+     * "pile-a"/"pile-b" and the label "First pile"/"Second pile". */
+    Boolean choosePile(int seat) {
+        Decision d = take(seat, x -> x.resume.equals("twopiles_pick")
+                || x.pickKinds.contains("pile-a") || x.pickKinds.contains("pile-b")
+                || (x.kind.equals("choose_n") && x.picks.size() == 1
+                        && (x.picks.get(0).equalsIgnoreCase("First pile")
+                                || x.picks.get(0).equalsIgnoreCase("Second pile"))));
+        if (d == null) {
+            return null;
+        }
+        boolean first = !(d.pickKinds.contains("pile-b")
+                || (d.picks.size() == 1 && d.picks.get(0).equalsIgnoreCase("Second pile")));
+        note("pile step " + stepIdx + ": " + (first ? "First" : "Second") + " pile " + d.picks);
+        return first;
+    }
+
+    private static boolean isCounterPick(Decision d, CounterType ct) {
+        return d.kind.equals("choose_n") && d.picks.size() == 1 && isCounterKind(d)
+                && isCounterLabel(d.picks.get(0), ct);
+    }
+
+    private static boolean isCounterKind(Decision d) {
+        return d.pickKinds.contains("counter") || d.resume.equals("counter_kind");
+    }
+
+    private static boolean isCounterLabel(String label, CounterType ct) {
+        return label.equalsIgnoreCase(ct.getName()) || label.equalsIgnoreCase(ct.toString())
+                || label.equalsIgnoreCase(ct.getCounterOnCardDisplayName());
     }
 
     private static Integer number(String s) {

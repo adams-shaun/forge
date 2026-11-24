@@ -13,6 +13,7 @@ import java.util.TreeMap;
 
 import org.testng.annotations.Test;
 
+import forge.ai.PlayerControllerAi;
 import forge.game.cost.CostDecisionMakerBase;
 import forge.game.cost.ICostVisitor;
 import forge.game.player.PlayerController;
@@ -42,6 +43,16 @@ public class ControllerCensusTest {
     static final List<String> COST_NO_CHOICE = List.of("CostAddMana", "CostDamage", "CostDraw", "CostExileFromStack",
             "CostFlipCoin", "CostGainLife", "CostMill", "CostPartMana", "CostPayEnergy", "CostPayLife", "CostPayShards",
             "CostPutCounter", "CostPutCounterYou", "CostRemoveCounter", "CostRollDice", "CostTap", "CostUnattach", "CostUntap");
+
+    /** Public PlayerController methods that PlayerControllerAi overrides but
+     * that decide nothing: one asks the player about the AI's play quality,
+     * the rest are AI state. */
+    static final Map<String, String> NON_DECISION = new TreeMap<>(Map.of(
+            "complainCardsCantPlayWell", "AI play-quality dialog",
+            "getSideboardingReport", "AI sideboarding report",
+            "isAI", "identity",
+            "resetAtEndOfTurn", "per-turn AI state",
+            "sideboardsByItself", "AI identity"));
 
     @Test
     public void everyAbstractDecisionMethodIsOverridden() {
@@ -73,6 +84,39 @@ public class ControllerCensusTest {
         assertTrue(abstracts > 100, "PlayerController has " + abstracts + " abstract methods; the census read nothing?");
         assertEquals(missing, List.of(), "decision methods answered silently by the AI");
         assertEquals(overriddenNotify, List.of(), "an allowlisted notification is overridden: drop it from NOTIFY");
+    }
+
+    /** The abstract census above misses a NON-abstract decision overload
+     * (chooseNumber/chooseBinary with params) because PlayerController gives it
+     * a default: PlayerControllerAi overrides that default with a silent AI
+     * answer, and ScriptedController inherited it. Require an override of every
+     * public, non-final PlayerController method the AI also overrides. */
+    @Test
+    public void everyAiAnsweredOverloadIsOverridden() {
+        List<String> missing = new ArrayList<>();
+        int checked = 0;
+        for (Method m : PlayerController.class.getDeclaredMethods()) {
+            if (!Modifier.isPublic(m.getModifiers()) || Modifier.isStatic(m.getModifiers())
+                    || Modifier.isFinal(m.getModifiers())) {
+                continue;
+            }
+            if (NOTIFY.containsKey(m.getName()) || NON_DECISION.containsKey(m.getName())) {
+                continue;
+            }
+            try {
+                PlayerControllerAi.class.getDeclaredMethod(m.getName(), m.getParameterTypes());
+            } catch (NoSuchMethodException e) {
+                continue; // PlayerController's own default is not an AI answer
+            }
+            checked++;
+            try {
+                ScriptedController.class.getDeclaredMethod(m.getName(), m.getParameterTypes());
+            } catch (NoSuchMethodException e) {
+                missing.add(m.getName() + sig(m));
+            }
+        }
+        assertTrue(checked > 100, "the AI answers only " + checked + " public methods; the census read nothing?");
+        assertEquals(missing, List.of(), "decision overloads answered silently by PlayerControllerAi");
     }
 
     @Test

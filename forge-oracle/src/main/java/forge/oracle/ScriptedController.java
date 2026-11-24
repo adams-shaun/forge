@@ -449,6 +449,15 @@ public class ScriptedController extends PlayerControllerAi {
         return super.chooseBinary(sa, question, kindOfChoice, defaultChoice);
     }
 
+    /** The params overload is the one Forge's AddOrRemove asks
+     * (CountersPutOrRemoveEffect, TimeTravelEffect) take. Left unoverridden,
+     * PlayerControllerAi answers it through the AI, a silent decision; route it
+     * through the same recorded yes/no path (and miss) as the plain overload. */
+    @Override
+    public boolean chooseBinary(SpellAbility sa, String question, BinaryChoiceType kindOfChoice, Map<String, Object> params) {
+        return chooseBinary(sa, question, kindOfChoice, (Boolean) null);
+    }
+
     @Override
     public boolean confirmPayment(CostPart costPart, String string, SpellAbility sa) {
         Boolean b = m.yesNoOptional(seat);
@@ -779,6 +788,15 @@ public class ScriptedController extends PlayerControllerAi {
         if (optionList.isEmpty()) {
             return null;
         }
+        if (!isOptional && optionList.size() == 1) {
+            // A lone forced entity is not a decision: TwoPiles' Separator$/
+            // Chooser$ and ChangeZoneEffect's Chooser$ ask even when the
+            // defined player list has one member, and gorge logs nothing for
+            // it. Taking the next gorge pick here would consume the pile card
+            // or the exiled card instead.
+            m.note("entity (" + title + "): lone forced option");
+            return optionList.get(0);
+        }
         List<T> picked = m.pickObjects(seat, optionList, isOptional ? 0 : 1, 1, "entity (" + title + ")");
         if (picked != null) {
             return picked.isEmpty() ? null : picked.get(0);
@@ -1049,6 +1067,32 @@ public class ScriptedController extends PlayerControllerAi {
     }
 
     @Override
+    public int chooseNumber(SpellAbility sa, String title, int min, int max, Map<String, Object> params) {
+        Object kind = params == null ? null : params.get("CounterType");
+        if (kind instanceof CounterType ct) {
+            // RemoveCounter's "any type" (and fixed-type up-to) amount ask:
+            // gorge's per-counter kind picks are the amount. With none and an
+            // "up to" ask, the answer is 0 (no counters removed); a plain
+            // numeric pick (a fixed-type ask) is the fallback.
+            int n = m.takeCounterPicks(seat, ct, max);
+            if (n >= min) {
+                return n;
+            }
+            if (n == 0) {
+                Integer plain = m.chooseNumber(seat, min, max);
+                if (plain != null) {
+                    return plain;
+                }
+                if (min == 0) {
+                    return 0;
+                }
+            }
+            m.miss("number", "counter " + ct.getName() + ": " + n + " picks, Forge wants " + min + ".." + max);
+        }
+        return chooseNumber(sa, title, min, max);
+    }
+
+    @Override
     public int chooseNumber(SpellAbility sa, String title, List<Integer> values, Player relatedPlayer) {
         if (values.size() == 1) {
             return values.get(0);
@@ -1112,13 +1156,22 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public boolean chooseCardsPile(SpellAbility sa, CardCollectionView pile1, CardCollectionView pile2, String faceUp) {
+        Boolean first = m.choosePile(seat);
+        if (first != null) {
+            return first;
+        }
         return missThen("pile", () -> super.chooseCardsPile(sa, pile1, pile2, faceUp));
     }
 
     @Override
     public CounterType chooseCounterType(List<CounterType> options, SpellAbility sa, String prompt, Map<String, Object> params) {
         if (options.size() == 1) {
+            // A lone legal kind is forced; the number ask consumes the picks.
             return options.get(0);
+        }
+        CounterType ct = m.takeCounterKind(seat, options);
+        if (ct != null) {
+            return ct;
         }
         return missThen("counter type", () -> super.chooseCounterType(options, sa, prompt, params));
     }
