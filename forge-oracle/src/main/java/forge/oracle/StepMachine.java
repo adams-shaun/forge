@@ -1422,14 +1422,58 @@ public final class StepMachine {
     }
 
     Boolean yesNo(int seat, String what) {
+        return yesNo(seat, what, false);
+    }
+
+    /** The answer to an optional trigger's own confirm when gorge folded the
+     * may into the body's optional Cost$ election (CR 603.5: "you may tap X
+     * untapped Myr" -- gorge's trigger_queue optionalFoldsIntoCost poses only
+     * the cost's pay/decline ask, and nothing at all when the cost is forced:
+     * X = 0, an unaffordable cost). Forge asks the OptionalDecider confirm
+     * regardless. A logged yes/no (or a pay/tap/decline pick, which is one)
+     * answers it; otherwise a cost-folded trigger is YES when gorge logged an
+     * X or object pick for the seat in this step (the election the cost then
+     * makes) and NO when it logged none. Null (a strict miss) for a trigger
+     * whose may is not folded. */
+    static Boolean foldedConfirm(boolean costFolded, boolean pickPending) {
+        return costFolded ? Boolean.valueOf(pickPending) : null;
+    }
+
+    /** Whether gorge logged an X or object pick, not yet consumed, for the
+     * seat in any of the steps: the election a cost-folded trigger's "yes"
+     * goes on to make. */
+    static boolean foldedPickPending(DecisionQueue dq, int seat, int[] steps) {
+        for (int st : steps) {
+            if (dq.peek(st, x -> x.seat == seat && !x.picks.isEmpty()
+                    && (DecisionQueue.isX(x) || DecisionQueue.isObjectChoice(x))) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    Boolean yesNo(int seat, String what, boolean costFolded) {
         Decision d = take(seat, DecisionQueue::isYesNo);
         if (d != null) {
             boolean y = DecisionQueue.yes(d);
             note("yesno step " + stepIdx + ": " + (y ? "yes" : "no") + " (" + what + ")");
             return y;
         }
+        Boolean folded = foldedConfirm(costFolded, foldedPickPending(dq, seat, decisionSteps()));
+        if (folded != null) {
+            note("yesno step " + stepIdx + ": " + (folded ? "yes" : "no")
+                    + " (gorge folded the may into the cost election; " + what + ")");
+            return folded;
+        }
         miss("yesno", what);
         return null;
+    }
+
+    /** Whether an optional trigger's body carries a non-Mandatory Cost$, the
+     * shape gorge folds the trigger's yes/no into (optionalFoldsIntoCost). */
+    static boolean costFoldedTrigger(SpellAbility wrapped) {
+        forge.game.cost.Cost cost = wrapped == null ? null : wrapped.getPayCosts();
+        return cost != null && !cost.isMandatory() && !cost.getCostParts().isEmpty();
     }
 
     /** A trigger-cost or optional-payment answer, if gorge logged one. */
