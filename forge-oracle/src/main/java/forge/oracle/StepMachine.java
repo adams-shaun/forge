@@ -973,9 +973,34 @@ public final class StepMachine {
             }
         }
         if (own == null) {
+            own = backFaceLandPlay(c);
+        }
+        if (own == null) {
             throw new HarnessError(Request.str(st, "card") + " has no land play");
         }
         return own;
+    }
+
+    /** A modal DFC's land back face (CR 712.12: a player playing a modal
+     * double-faced card as a land chooses one of its faces that's a land, and
+     * it enters with that face up). c.getSpellAbilities() is the front state's
+     * only, so a spell-front card (Glasswing Grace // Age-Graced Chapel,
+     * Turntimber Symbiosis) exposes no land ability there; Forge offers the back
+     * face's as a getAllPossibleAbilities entry (Card.hasPlayableLandFace) and
+     * LandAbility.resolve turns the card to that face (setSplitStateToPlayAbility)
+     * before the move, so its entry choice (pay 3 life or enter tapped) is
+     * asked of the back face. null for a card with no such face. */
+    private SpellAbility backFaceLandPlay(Card c) {
+        if (!c.isModal() || !c.hasState(forge.card.CardStateName.Backside)) {
+            return null;
+        }
+        for (SpellAbility sa : c.getState(forge.card.CardStateName.Backside).getSpellAbilities()) {
+            if (sa.isLandAbility()) {
+                note("play: " + c.getName() + " as its back-face land " + sa.getCardState().getName());
+                return sa;
+            }
+        }
+        return null;
     }
 
     /** The land play a MayPlay static grants c outside the hand: the first
