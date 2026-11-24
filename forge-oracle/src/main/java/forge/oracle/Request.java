@@ -178,15 +178,49 @@ public final class Request {
         return e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isNumber() ? e.getAsInt() : 0;
     }
 
-    /** Whether the recorded game's coin flips were won, in order: what the
-     * "forced_flips" of the item name. */
-    public List<Boolean> forcedFlips() {
+    /**
+     * The coin flips the item records for step i, in log order, as the
+     * results the driver feeds nextBoolean: one boolean per generator draw,
+     * the recorded outcome repeated {@code draws} times. A forced flip (a
+     * FlipCoinMod static) takes no result from the generator and is never
+     * returned, and a doubled flip (Krark's Thumb) is returned once per draw
+     * it made, both draws the recorded outcome: with a heads call a won flip
+     * kept a heads, so had either result been tails the controller would have
+     * chosen it and won. The Go request emits them as
+     * {@code coin_flips: [{step, seat, win, forced, draws}]}; the seat is not
+     * read, exactly as a die roll's. A malformed entry names no flip and is
+     * skipped, exactly as the item's other side fields are read leniently.
+     */
+    public List<Boolean> coinFlips(int i) {
         List<Boolean> out = new ArrayList<>();
-        JsonElement e = item == null ? null : item.get("forced_flips");
-        if (e != null && e.isJsonArray()) {
-            for (JsonElement f : e.getAsJsonArray()) {
-                JsonElement w = f.getAsJsonObject().get("win");
-                out.add(w != null && w.getAsBoolean());
+        JsonElement e = item == null ? null : item.get("coin_flips");
+        if (e == null || !e.isJsonArray() || i < 0) {
+            return out;
+        }
+        for (JsonElement x : e.getAsJsonArray()) {
+            if (x == null || !x.isJsonObject()) {
+                continue;
+            }
+            JsonObject f = x.getAsJsonObject();
+            if (intOr(f, "step", -1) != i) {
+                continue;
+            }
+            JsonElement forced = f.get("forced");
+            if (forced != null && forced.isJsonPrimitive()
+                    && forced.getAsJsonPrimitive().isBoolean() && forced.getAsBoolean()) {
+                continue;
+            }
+            JsonElement w = f.get("win");
+            if (w == null || !w.isJsonPrimitive() || !w.getAsJsonPrimitive().isBoolean()) {
+                continue;
+            }
+            boolean win = w.getAsBoolean();
+            int draws = intOr(f, "draws", 0);
+            if (draws < 1) {
+                draws = 1;
+            }
+            for (int n = 0; n < draws; n++) {
+                out.add(win);
             }
         }
         return out;

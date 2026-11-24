@@ -42,8 +42,11 @@ public class MyRandom {
      * parameter, so routing {@code nextInt(bound)} through it would call the
      * delegate's unbounded {@code nextInt()} and a generator that only
      * overrides the bounded method (the oracle driver's ForcedDieRandom, a
-     * test's scripted source) would never see the bound. Both bounded forms
-     * are forwarded directly and counted once.
+     * test's scripted source) would never see the bound. The same holds for
+     * the coin flip: routing {@code nextBoolean()} through {@link #next(int)}
+     * would re-derive the boolean from the delegate's unbounded nextInt() and
+     * the driver's nextBoolean force would never see the flip. Both bounded
+     * forms and nextBoolean are forwarded directly and counted once.
      */
     private static final class CountingRandom extends Random {
         private final Random delegate;
@@ -58,6 +61,11 @@ public class MyRandom {
             calls.incrementAndGet();
             if (TRACE) { trace(); }
             return delegate.nextInt(bound);
+        }
+        @Override public boolean nextBoolean() {
+            calls.incrementAndGet();
+            if (TRACE) { trace(); }
+            return delegate.nextBoolean();
         }
         @Override public int nextInt(int origin, int bound) {
             calls.incrementAndGet();

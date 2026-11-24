@@ -342,8 +342,10 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public boolean chooseBinary(SpellAbility sa, String question, BinaryChoiceType kindOfChoice, Boolean defaultChoice) {
-        // The recorded flip's outcome is forced as the call being right or wrong.
-        if (kindOfChoice == BinaryChoiceType.HeadsOrTails && !m.req.forcedFlips().isEmpty()) {
+        // The recorded flip's outcome is forced as the call being right or
+        // wrong, so the call is heads: the generator's forced result is the
+        // outcome itself (Request.coinFlips).
+        if (kindOfChoice == BinaryChoiceType.HeadsOrTails && !m.req.coinFlips(m.step()).isEmpty()) {
             return true;
         }
         m.miss("binary", question);
