@@ -1817,11 +1817,18 @@ public final class StepMachine {
             names.add(c.getName());
         }
         if (names.size() <= 1) {
+            // A lone card (no choice, but gorge still logs the one-pick order of
+            // a look-and-put-back) is taken only when its pick names that card:
+            // any other one-pick order belongs to some other ask.
+            String lone = cards.size() == 1 ? names.iterator().next() : null;
             Decision d = what.contains("Graveyard")
-                    ? take(seat, x -> DecisionQueue.isGraveyardOrder(x) && x.picks.size() == cards.size())
-                    : take(seat, x -> DecisionQueue.isCardOrder(x) && x.picks.size() == cards.size());
+                    ? take(seat, x -> DecisionQueue.isGraveyardOrder(x) && x.picks.size() == cards.size()
+                            && (lone == null || x.picks.get(0).equals(lone)))
+                    : take(seat, x -> DecisionQueue.isCardOrder(x) && x.picks.size() == cards.size()
+                            && (lone == null || x.picks.get(0).equals(lone)));
             if (d != null) {
-                note("order step " + stepIdx + ": " + what + " (identical names: unobservable) " + d.picks);
+                note("order step " + stepIdx + ": " + what + " ("
+                        + (lone != null ? "one card" : "identical names") + ": unobservable) " + d.picks);
             }
             return new ArrayList<>(cards);
         }

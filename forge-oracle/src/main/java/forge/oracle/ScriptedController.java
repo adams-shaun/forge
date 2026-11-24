@@ -1186,7 +1186,15 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CardCollectionView orderMoveToZoneList(CardCollectionView cards, ZoneType destinationZone, SpellAbility source) {
-        if (cards.size() <= 1) {
+        if (cards.isEmpty()) {
+            return cards;
+        }
+        // One card is no choice, but gorge logs a one-pick order for it (look at
+        // the top card of a library, put it back: RearrangeTopOfLibrary), so the
+        // lone-card ask goes through orderCards too, which consumes that pin when
+        // its pick names the card and otherwise leaves the queue alone.
+        if (cards.size() == 1) {
+            m.orderCards(seat, cards, "order to " + destinationZone);
             return cards;
         }
         List<Card> ordered = m.orderCards(seat, cards, "order to " + destinationZone);
