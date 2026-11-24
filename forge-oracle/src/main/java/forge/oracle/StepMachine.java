@@ -612,7 +612,7 @@ public final class StepMachine {
                 castMode = Request.str(st, "cast_mode");
                 sa = spellFor(c, st, p);
                 break;
-            case "play": sa = landFor(c, st); break;
+            case "play": sa = landFor(c, st, p); break;
             default: sa = abilityFor(c); break;
         }
         sa.setActivatingPlayer(p);
@@ -891,13 +891,57 @@ public final class StepMachine {
         return Math.min(max, modeKeywordTimes(castMode, kw));
     }
 
-    private SpellAbility landFor(Card c, JsonObject st) {
+    /** The land play a play step makes. From the hand it is the card's own
+     * land ability. From any other zone (library top under Ka-Zar of the
+     * Savage Land, an exiled card Irascible Wolverine lets you play, a milled
+     * card under Tablet of Discovery) the card's own ability cannot be played:
+     * Forge offers the play as the copy a MayPlay static grants
+     * (GameActionUtil's may-play alternative, zone restriction lifted), the
+     * same way spellFor takes a commander's cast. A playable such copy wins;
+     * with none the card's own ability is returned and the step fails as
+     * Forge refuses it. */
+    private SpellAbility landFor(Card c, JsonObject st, Player p) {
+        SpellAbility own = null;
         for (SpellAbility sa : c.getSpellAbilities()) {
             if (sa.isLandAbility()) {
-                return sa;
+                own = sa;
+                break;
             }
         }
-        throw new HarnessError(Request.str(st, "card") + " has no land play");
+        if (!c.isInZone(ZoneType.Hand)) {
+            SpellAbility granted = mayPlayLand(c, p);
+            if (granted != null) {
+                return granted;
+            }
+        }
+        if (own == null) {
+            throw new HarnessError(Request.str(st, "card") + " has no land play");
+        }
+        return own;
+    }
+
+    /** The land play a MayPlay static grants c outside the hand: the first
+     * such copy Forge says canPlay, else the first one, else null. */
+    private SpellAbility mayPlayLand(Card c, Player p) {
+        game.getAction().checkStaticAbilities();
+        SpellAbility first = null;
+        for (SpellAbility sa : c.getAllPossibleAbilities(p, false)) {
+            if (!sa.isLandAbility() || sa.getMayPlay() == null) {
+                continue;
+            }
+            sa.setActivatingPlayer(p);
+            if (sa.canPlay()) {
+                note("play: from " + c.getZone().getZoneType() + " by " + sa.getMayPlay().getHostCard());
+                return sa;
+            }
+            if (first == null) {
+                first = sa;
+            }
+        }
+        if (first != null) {
+            note("play: from " + c.getZone().getZoneType() + ", no playable may-play copy; took " + first);
+        }
+        return first;
     }
 
     /** Ability identity (DESIGN 6.5, P2-1). The sidecar carries gorge's IR
