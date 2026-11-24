@@ -141,6 +141,59 @@ public final class DecisionQueue {
         return d.kind.equals("order") && d.gorgeKind.equals("graveyard_order");
     }
 
+    /** A non-trigger card order: an arrange or a simultaneous-move pin (dig
+     * and hideaway bottom, library placement, a top/bottom split). Forge asks
+     * its own ordering question for any multi-card move, even when every card
+     * has the same name, so the decision must still be consumed then. A
+     * graveyard pin is its own role (see {@link #isGraveyardOrder}) and a
+     * trigger order is consumed by {@code orderTriggers}. */
+    public static boolean isCardOrder(Decision d) {
+        return d.kind.equals("order") && !d.pickKinds.isEmpty()
+                && !d.pickKinds.get(0).equals("trigger") && !isGraveyardOrder(d);
+    }
+
+    /** gorge's OriginAlternative$ zone election ("search your library and/or
+     * graveyard", resume search_zones): one choose_n whose picks are zone
+     * labels. Forge asks it as one confirm per zone, not a yes/no. */
+    public static boolean isSearchZones(Decision d) {
+        return d.kind.equals("choose_n") && d.resume.equals("search_zones")
+                && d.pickKinds.contains("zone");
+    }
+
+    /** The one zone a Forge ChangeZoneFromAltSource per-zone confirm names
+     * ("Search your graveyard?" -> "graveyard"), or "" when it names none. */
+    public static String zoneWord(String message) {
+        String m = message == null ? "" : message.trim().toLowerCase(Locale.ROOT);
+        int q = m.indexOf('?');
+        if (q >= 0) {
+            m = m.substring(0, q).trim();
+        }
+        for (String z : ZONE_WORDS) {
+            if (m.equals(z) || m.endsWith(" " + z)) {
+                return z;
+            }
+        }
+        return "";
+    }
+
+    /** Whether the zone election searched zone (a picked "Search the <zone>"
+     * label). */
+    public static boolean searchesZone(Decision d, String zone) {
+        if (zone == null || zone.isEmpty()) {
+            return false;
+        }
+        for (String pick : d.picks) {
+            String l = pick.trim().toLowerCase(Locale.ROOT);
+            if (l.equals(zone) || l.endsWith(" " + zone)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static final String[] ZONE_WORDS = {"graveyard", "library", "hand", "exile", "battlefield", "stack",
+            "command", "sideboard"};
+
     public List<Decision> unconsumed() {
         List<Decision> out = new ArrayList<>();
         for (Decision d : all) {
@@ -216,10 +269,11 @@ public final class DecisionQueue {
         // (the state-based return's confirmAction, the replacement's
         // confirmReplacementEffect).
         if (k.equals("yes") || k.equals("opening_yes") || k.equals("trigger_cost_pay") || k.equals("trigger_cost_tap")
-                || k.equals("command_zone")) {
+                || k.equals("command_zone") || k.equals("endure_counters")) {
             return Boolean.TRUE;
         }
-        if (k.equals("no") || k.equals("opening_no") || k.equals("trigger_cost_decline") || k.equals("leave")) {
+        if (k.equals("no") || k.equals("opening_no") || k.equals("trigger_cost_decline") || k.equals("leave")
+                || k.equals("endure_spirit")) {
             return Boolean.FALSE;
         }
         String l = label.trim().toLowerCase(Locale.ROOT);
@@ -275,7 +329,8 @@ public final class DecisionQueue {
     }
 
     static final java.util.Set<String> NON_OBJECT_PICKS = java.util.Set.of("yes", "no", "opening_yes", "opening_no",
-            "trigger_cost_decline", "trigger_cost_pay", "gift_decline", "activate", "x", "altaddcost", "primary", "type", "mode", "color", "name", "mana", "unlock", "forage_exile");
+            "trigger_cost_decline", "trigger_cost_pay", "gift_decline", "activate", "x", "altaddcost", "primary", "type", "mode", "color", "name", "mana", "unlock", "forage_exile",
+            "endure_counters", "endure_spirit");
 
     /** A trigger or optional-cost payment answer: true pays, false declines. */
     public static Boolean payOf(Decision d) {

@@ -279,6 +279,17 @@ public final class StepMachine {
         return null;
     }
 
+    /** The first unconsumed matching decision, without consuming it. */
+    Decision peek(int seat, Predicate<Decision> match) {
+        for (int st : decisionSteps()) {
+            Decision d = dq.peek(st, x -> x.seat == seat && match.test(x));
+            if (d != null) {
+                return d;
+            }
+        }
+        return null;
+    }
+
     /** The steps whose logged decisions answer a question asked now. gorge's
      * pass_to stops at the first decision posed in the named step: a
      * beginning-of-combat trigger's target ask is pending there, so gorge
@@ -1655,18 +1666,27 @@ public final class StepMachine {
         return null;
     }
 
-    /** The CR 404.3 order of a simultaneous multi-card graveyard move. Forge
-     * asks this separately from the selection, so gorge's order travels as its
-     * own "order" decision (gorge_kind "graveyard_order", one pick per card in
-     * gorge's order); the selection decision was already consumed when the
-     * move started. Identically named cards are unobservable, as before. */
+    /** The CR 404.3 order of a simultaneous multi-card graveyard move, and
+     * any library arrange Forge asks as its own question (dig/hideaway
+     * bottom, library placement). gorge's order travels as an "order"
+     * decision (gorge_kind "graveyard_order" for the graveyard pin, one pick
+     * per card in gorge's order); the selection decision was already consumed
+     * when the move started. Identical names make the order unobservable, but
+     * Forge still asks, so the matching decision is consumed rather than left
+     * over. */
     List<Card> orderCards(int seat, Collection<Card> cards, String what) {
         Set<String> names = new HashSet<>();
         for (Card c : cards) {
             names.add(c.getName());
         }
         if (names.size() <= 1) {
-            return new ArrayList<>(cards); // identical names: the order is unobservable
+            Decision d = what.contains("Graveyard")
+                    ? take(seat, x -> DecisionQueue.isGraveyardOrder(x) && x.picks.size() == cards.size())
+                    : take(seat, x -> DecisionQueue.isCardOrder(x) && x.picks.size() == cards.size());
+            if (d != null) {
+                note("order step " + stepIdx + ": " + what + " (identical names: unobservable) " + d.picks);
+            }
+            return new ArrayList<>(cards);
         }
         if (!what.contains("Graveyard")) {
             // The pin is graveyard-specific. A library/exile order is still

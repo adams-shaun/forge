@@ -86,6 +86,19 @@ public class ScriptedController extends PlayerControllerAi {
      * has a mana cost (no basic land does; a chain would re-enter). */
     private boolean payingOwnSources;
 
+    /** The in-flight ChangeZoneFromAltSource search (OriginAlternative$):
+     * gorge posed ONE zone election where Forge asks an initial "search the
+     * library?" confirm and then one confirm per alternative zone. The
+     * election is taken once and its picks answer the remaining confirms;
+     * altZoneLeft is the number of per-zone confirms still to come (the
+     * election has one option per origin zone, library first). */
+    private int altZoneStep = -99;
+    private int altZoneSeat = -1;
+    private boolean altZoneActive;
+    private Decision altZone;
+    private boolean altZoneDeclined;
+    private int altZoneLeft;
+
     public ScriptedController(Game game, Player p, LobbyPlayer lp, StepMachine m, int seat) {
         super(game, p, lp);
         this.m = m;
@@ -94,6 +107,10 @@ public class ScriptedController extends PlayerControllerAi {
 
     private Decision take(Predicate<Decision> match) {
         return m.take(seat, match);
+    }
+
+    private Decision peek(Predicate<Decision> match) {
+        return m.peek(seat, match);
     }
 
     // ---- priority and playing ---------------------------------------------
@@ -274,8 +291,88 @@ public class ScriptedController extends PlayerControllerAi {
 
     // ---- yes / no ---------------------------------------------------------
 
+    /** Answer a ChangeZoneFromAltSource confirm from gorge's search_zones
+     * election. null means this is not that shape, so the generic yes/no path
+     * runs (and reports a strict miss when nothing answers it). */
+    private Boolean altSourceAnswer(int seat, String message) {
+        int step = m.step();
+        if (step != altZoneStep || seat != altZoneSeat) {
+            altZoneStep = step;
+            altZoneSeat = seat;
+            altZoneActive = false;
+            altZone = null;
+            altZoneDeclined = false;
+            altZoneLeft = 0;
+        }
+        String zone = DecisionQueue.zoneWord(message);
+        boolean perZone = message != null
+                && message.trim().toLowerCase(java.util.Locale.ROOT).startsWith("search your ")
+                && !zone.isEmpty();
+        if (!perZone && altZoneActive) {
+            // Another effect's initial confirm at the same step.
+            altZoneActive = false;
+            altZone = null;
+            altZoneDeclined = false;
+            altZoneLeft = 0;
+        }
+        if (!perZone) {
+            // The initial "search the library?" confirm is gorge's zone
+            // election, not its optional search_confirm: Forge asks the
+            // Optional$ gate later, as a ChangeZoneGeneral confirm, so the
+            // search_confirm must stay for that ask.
+            Decision z = take(DecisionQueue::isSearchZones);
+            if (z != null) {
+                startAltZones(z);
+                boolean yes = DecisionQueue.searchesZone(z, "library");
+                m.note("alt source step " + step + ": library " + (yes ? "yes" : "no"));
+                return yes;
+            }
+            // An optional search declined: gorge logged search_confirm "No"
+            // and no zone election. Answer the initial and every per-zone
+            // confirm no, leaving the search_confirm for Forge's later gate.
+            Decision sc = peek(x -> x.resume.equals("search_confirm") && DecisionQueue.isYesNo(x));
+            if (sc != null && !DecisionQueue.yes(sc)) {
+                altZoneActive = true;
+                altZoneDeclined = true;
+                m.note("alt source step " + step + ": declined (no zone election)");
+                return false;
+            }
+            return null;
+        }
+        // A per-zone confirm ("Search your graveyard?"). A declined optional
+        // search posed no election, and every zone is then unsearched.
+        if (altZoneDeclined) {
+            return false;
+        }
+        if (altZone == null) {
+            return null; // the initial confirm found no election; name the ask
+        }
+        boolean yes = DecisionQueue.searchesZone(altZone, zone);
+        m.note("alt source step " + step + ": " + zone + " " + (yes ? "yes" : "no"));
+        altZoneLeft--;
+        if (altZoneLeft <= 0) {
+            altZoneActive = false;
+        }
+        return yes;
+    }
+
+    private void startAltZones(Decision z) {
+        altZone = z;
+        altZoneActive = true;
+        altZoneDeclined = false;
+        // Forge asks one confirm per OriginAlternative$ zone after the initial
+        // library confirm; the election holds one option per origin zone.
+        altZoneLeft = Math.max(0, z.max - 1);
+    }
+
     @Override
     public boolean confirmAction(SpellAbility sa, PlayerActionConfirmMode mode, String message, List<String> options, Card cardToShow, Map<String, Object> params) {
+        if (mode == PlayerActionConfirmMode.ChangeZoneFromAltSource) {
+            Boolean b = altSourceAnswer(seat, message);
+            if (b != null) {
+                return b;
+            }
+        }
         if (mode == PlayerActionConfirmMode.ChangeZoneToAltDestination && options != null && options.size() == 2) {
             // true keeps the first destination (ChangeZoneEffect): gorge's
             // changezone_alternative pick names it ("top" / "bottom", a zone).

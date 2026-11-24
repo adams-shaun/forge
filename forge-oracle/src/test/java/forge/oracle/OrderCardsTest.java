@@ -6,10 +6,15 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
+import java.util.ArrayList;
 import java.util.List;
 
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
+import forge.StaticData;
+import forge.game.card.Card;
+import forge.game.card.CardFactory;
 import forge.oracle.DecisionQueue.Decision;
 
 /**
@@ -22,6 +27,16 @@ import forge.oracle.DecisionQueue.Decision;
 public class OrderCardsTest {
     private static final String ORDER = "[{\"step\":0,\"seat\":0,\"kind\":\"order\","
             + "\"gorge_kind\":\"graveyard_order\",\"picks\":[\"Poison Dart Frog\",\"Akal Pakal\"]}]";
+    private static final String DIG_BOTTOM = "[{\"step\":0,\"seat\":0,\"kind\":\"order\","
+            + "\"picks\":[\"Forest\",\"Forest\",\"Forest\",\"Forest\"],"
+            + "\"pick_refs\":[\"p0:Forest#4\",\"p0:Forest#5\",\"p0:Forest#6\",\"p0:Forest#7\"],"
+            + "\"pick_kinds\":[\"dig_bottom\",\"dig_bottom\",\"dig_bottom\",\"dig_bottom\"],"
+            + "\"resume\":\"dig_arrange\",\"gorge_kind\":\"arrange\",\"options\":4,\"min\":4,\"max\":4}]";
+
+    @BeforeClass
+    public void boot() {
+        Bootstrap.init(TestRes.res());
+    }
 
     private static StepMachine machine(String decisions) {
         Request req = Request.parse("{\"id\":\"order\",\"item\":{\"steps\":[{\"op\":\"pass\"}]},"
@@ -29,6 +44,12 @@ public class OrderCardsTest {
         StepMachine m = new StepMachine(req, false);
         m.stepIdx = 0;
         return m;
+    }
+
+    private static Card card(StepMachine m, String name) {
+        Card c = CardFactory.getCard(StaticData.instance().getCommonCards().getCard(name), m.seats[0], m.game);
+        c.setGameTimestamp(m.game.getNextTimestamp());
+        return c;
     }
 
     @Test
@@ -95,5 +116,23 @@ public class OrderCardsTest {
         assertNull(m.dq.leftover());
         assertEquals(m.dq.unconsumed().size(), 0,
                 "an order pin only answers the ask; a move Forge never asks about is unobservable");
+    }
+
+    /** A same-name dig/hideaway order is unobservable, but Forge still asks
+     * its "order to Library" question, so orderCards must consume the
+     * matching decision rather than leave it for the leftover report. */
+    @Test
+    public void sameNameLibraryOrderIsConsumedThoughUnobservable() {
+        StepMachine m = machine(DIG_BOTTOM);
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            cards.add(card(m, "Forest"));
+        }
+        List<Card> got = m.orderCards(0, cards, "order to Library");
+        assertEquals(got, cards);
+        assertTrue(m.notes.toString().contains("identical names"), m.notes.toString());
+        assertNull(m.take(0, DecisionQueue::isCardOrder), "the same-name card order is consumed once");
+        assertNull(m.dq.leftover());
     }
 }

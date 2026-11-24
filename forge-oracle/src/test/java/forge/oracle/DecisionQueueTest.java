@@ -153,6 +153,76 @@ public class DecisionQueueTest {
         assertNull(d.leftover());
     }
 
+    static final String ENDURE_COUNTERS = "{\"step\":10,\"seat\":0,\"kind\":\"choose_n\",\"picks\":[\"Put +1/+1 counters on it\"],"
+            + "\"pick_refs\":[\"p0:Dusyut Earthcarver\"],\"object_picks\":[\"p0:Dusyut Earthcarver\"],"
+            + "\"pick_kinds\":[\"endure_counters\"],\"resume\":\"endure\",\"gorge_kind\":\"choose\",\"min\":1,\"max\":1}";
+    static final String ENDURE_SPIRIT = ENDURE_COUNTERS.replace("Put +1/+1 counters on it", "Create a Spirit")
+            .replace("endure_counters", "endure_spirit");
+    static final String SEARCH_ZONES = "{\"step\":8,\"seat\":0,\"kind\":\"choose_n\",\"picks\":[\"Search the library\"],"
+            + "\"pick_refs\":[\"Search the library\"],\"pick_kinds\":[\"zone\"],\"resume\":\"search_zones\","
+            + "\"gorge_kind\":\"choose\",\"options\":2,\"min\":1,\"max\":2}";
+    static final String SEARCH_ZONES_BOTH = SEARCH_ZONES.replace("[\"Search the library\"]",
+            "[\"Search the library\",\"Search the graveyard\"]").replace("\"pick_refs\":[\"Search the library\"]",
+            "\"pick_refs\":[\"Search the library\",\"Search the graveyard\"]").replace("\"pick_idx\":[0]",
+            "\"pick_idx\":[0,1]");
+    static final String DIG_BOTTOM = "{\"step\":7,\"seat\":0,\"kind\":\"order\",\"picks\":[\"Forest\",\"Forest\",\"Forest\",\"Forest\"],"
+            + "\"pick_refs\":[\"p0:Forest#4\",\"p0:Forest#5\",\"p0:Forest#6\",\"p0:Forest#7\"],"
+            + "\"pick_kinds\":[\"dig_bottom\",\"dig_bottom\",\"dig_bottom\",\"dig_bottom\"],\"resume\":\"dig_arrange\","
+            + "\"gorge_kind\":\"arrange\",\"options\":4,\"min\":4,\"max\":4}";
+    static final String GRAVEYARD_ORDER = "{\"step\":5,\"seat\":0,\"kind\":\"order\",\"picks\":[\"Grizzly Bears\",\"Forest\"],"
+            + "\"pick_kinds\":[\"graveyard_order\",\"graveyard_order\"],\"gorge_kind\":\"graveyard_order\",\"min\":2,\"max\":2}";
+    static final String TRIGGER_ORDER = "{\"step\":5,\"seat\":0,\"kind\":\"order\",\"picks\":[\"A: draw\",\"B: draw\"],"
+            + "\"pick_kinds\":[\"trigger\",\"trigger\"],\"gorge_kind\":\"trigger_order\",\"min\":2,\"max\":2}";
+
+    /** Endure is a two-way choice in gorge, but Forge asks it as a plain
+     * confirmAction with no mode: both pick kinds are yes/no, and neither is
+     * an object choice that merely names the permanent. */
+    @Test
+    public void endureChoiceKindsAreYesNo() {
+        Decision counters = q(ENDURE_COUNTERS).all().get(0);
+        assertTrue(DecisionQueue.isYesNo(counters));
+        assertTrue(DecisionQueue.yes(counters));
+        assertFalse(DecisionQueue.isObjectChoice(counters), "the counters pick names its source, it chooses no object");
+
+        Decision spirit = q(ENDURE_SPIRIT).all().get(0);
+        assertTrue(DecisionQueue.isYesNo(spirit));
+        assertFalse(DecisionQueue.yes(spirit));
+        assertFalse(DecisionQueue.isObjectChoice(spirit));
+    }
+
+    /** One search_zones election answers Forge's initial library confirm and
+     * each per-zone confirm; the zone word comes from Forge's prompt. */
+    @Test
+    public void searchZonesElectionAnswersPerZoneConfirms() {
+        Decision library = q(SEARCH_ZONES).all().get(0);
+        assertTrue(DecisionQueue.isSearchZones(library));
+        assertTrue(DecisionQueue.searchesZone(library, "library"));
+        assertFalse(DecisionQueue.searchesZone(library, "graveyard"));
+        assertEquals(DecisionQueue.zoneWord("Search your graveyard?"), "graveyard");
+        assertEquals(DecisionQueue.zoneWord("Search your hand?"), "hand");
+        assertEquals(DecisionQueue.zoneWord("Cancel Search"), "", "a message naming no zone");
+
+        Decision both = q(SEARCH_ZONES_BOTH).all().get(0);
+        assertTrue(DecisionQueue.searchesZone(both, "library"));
+        assertTrue(DecisionQueue.searchesZone(both, "graveyard"));
+    }
+
+    /** A same-name library arrange (Growing Rites of Itlimoc's all-to-bottom
+     * dig) is still an order decision to consume; the graveyard pin is its
+     * own role, and a trigger order is not a card order. */
+    @Test
+    public void orderShapesAreClassifiedByRole() {
+        Decision dig = q(DIG_BOTTOM).all().get(0);
+        assertTrue(DecisionQueue.isCardOrder(dig));
+        assertFalse(DecisionQueue.isGraveyardOrder(dig));
+
+        Decision grave = q(GRAVEYARD_ORDER).all().get(0);
+        assertTrue(DecisionQueue.isGraveyardOrder(grave));
+        assertFalse(DecisionQueue.isCardOrder(grave), "the graveyard pin answers only the graveyard question");
+
+        assertFalse(DecisionQueue.isCardOrder(q(TRIGGER_ORDER).all().get(0)));
+    }
+
     /** The mana gorge spent at a step is the item's payment array entry. */
     @Test
     public void requestReadsTheRecordedPayment() {
