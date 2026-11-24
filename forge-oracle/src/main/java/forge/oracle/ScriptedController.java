@@ -479,7 +479,7 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public boolean confirmTrigger(WrappedAbility sa) {
-        Boolean b = m.yesNo(seat, "optional trigger " + sa);
+        Boolean b = m.yesNo(seat, "optional trigger " + sa, StepMachine.costFoldedTrigger(sa.getWrappedAbility()));
         return b != null ? b : super.confirmTrigger(sa);
     }
 
