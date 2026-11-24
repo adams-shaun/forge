@@ -1910,8 +1910,8 @@ public final class BridgeController extends PlayerControllerAi {
 
     @Override
     public CardCollection chooseCardsToDiscardFrom(Player p, SpellAbility sa, CardCollection validCards, int min, int max,
-            CardCollectionView visibleToChooser) {
-        return fb("chooseCardsToDiscardFrom", () -> super.chooseCardsToDiscardFrom(p, sa, validCards, min, max, visibleToChooser));
+            DelayedReveal delayedReveal) {
+        return fb("chooseCardsToDiscardFrom", () -> super.chooseCardsToDiscardFrom(p, sa, validCards, min, max, delayedReveal));
     }
 
     @Override

@@ -697,9 +697,9 @@ public class ScriptedController extends PlayerControllerAi {
     }
 
     @Override
-    public CardCollection chooseCardsToDiscardFrom(Player playerDiscard, SpellAbility sa, CardCollection validCards, int min, int max, CardCollectionView visibleToChooser) {
+    public CardCollection chooseCardsToDiscardFrom(Player playerDiscard, SpellAbility sa, CardCollection validCards, int min, int max, DelayedReveal delayedReveal) {
         List<Card> picked = m.pickObjects(seat, validCards, min, max, "discard");
-        return picked != null ? new CardCollection(picked) : super.chooseCardsToDiscardFrom(playerDiscard, sa, validCards, min, max, visibleToChooser);
+        return picked != null ? new CardCollection(picked) : super.chooseCardsToDiscardFrom(playerDiscard, sa, validCards, min, max, delayedReveal);
     }
 
     @Override
