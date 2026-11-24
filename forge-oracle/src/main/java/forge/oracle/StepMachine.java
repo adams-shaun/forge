@@ -2332,6 +2332,27 @@ public final class StepMachine {
         return n;
     }
 
+    /** The amount a "choose any number" ask announces (Forge's
+     * announceRequirements with a non-X title: the Join Forces scripts'
+     * ListTitle$ "amount of mana to pay"). gorge logs it as a choose_n whose
+     * pick kind is "number" (resume choosenumber). Taken only when it lies in
+     * min..max; an out-of-range pick stays queued, so the miss names it. */
+    Integer announceNumber(int seat, int min, int max) {
+        Predicate<Decision> isNumber = x -> x.kind.equals("choose_n") && x.picks.size() == 1 && !DecisionQueue.isX(x)
+                && (x.pickKinds.contains("number") || x.resume.equals("choosenumber")) && number(x.picks.get(0)) != null;
+        Decision d = peek(seat, isNumber);
+        if (d == null) {
+            return null;
+        }
+        Integer n = number(d.picks.get(0));
+        if (n < min || n > max) {
+            return null;
+        }
+        take(seat, x -> x == d);
+        note("announce number step " + stepIdx + ": " + n);
+        return n;
+    }
+
     /** gorge logs one counter-kind pick per counter removed: a choose_n with
      * pick kind "counter" and resume "counter_kind". Forge asks remove-any-type
      * as chooseCounterType (the type) then chooseNumber (the amount), so the

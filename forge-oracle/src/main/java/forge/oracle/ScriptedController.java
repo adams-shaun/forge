@@ -274,6 +274,15 @@ public class ScriptedController extends PlayerControllerAi {
         if (min == max) {
             return min;
         }
+        if (!"X".equalsIgnoreCase(announce)) {
+            // A "choose any number" ask that is not an {X} (Join Forces:
+            // "amount of mana to pay"): gorge logs it as a number pick.
+            Integer n = m.announceNumber(seat, min, max);
+            if (n != null) {
+                m.note("announce " + announce + "=" + n + " (range " + min + ".." + max + ")");
+                return n;
+            }
+        }
         if (min == 0 && m.take(seat, x -> x.pickKinds.contains("trigger_cost_decline")) != null) {
             // "you may pay {1} up to three times": gorge declined paying at all.
             m.note("announce " + announce + "=0 (gorge: trigger_cost_decline)");
@@ -412,6 +421,12 @@ public class ScriptedController extends PlayerControllerAi {
                 && sa.hasParam("Optional") && !sa.hasParam("Echo") && !sa.hasParam("CumulativeUpkeep")) {
             return sacrificeConfirm(sa);
         }
+        if (mode == null && sa != null && sa.getApi() == ApiType.Attach && sa.hasParam("Optional") && cardToShow != null) {
+            Boolean attach = attachConfirm(sa, cardToShow);
+            if (attach != null) {
+                return attach;
+            }
+        }
         if (!cancelSearch && mode == PlayerActionConfirmMode.ChangeZoneGeneral && zeroCandidateHiddenConfirm(sa)) {
             m.note("zero-candidate confirm step " + m.step() + ": no (" + message + ")");
             return false;
@@ -527,6 +542,65 @@ public class ScriptedController extends PlayerControllerAi {
         return true;
     }
 
+    // An Optional$ Attach asks one "Do you want to attach X to Y?" per attachment
+    // (AttachEffect), while gorge logs ONE 0..N card pick naming the attachments
+    // it attached (resume attach_subset / attach_choice); an empty pick is the
+    // recorded "none". The pick is consumed at the first confirm and its refs
+    // answer every confirm of that effect (same step, same host): yes for a
+    // named attachment, no for the rest.
+    private int attachStep = -99;
+    private Card attachHost;
+    private List<Card> attachYes = new ArrayList<>();
+    /** The attachment a consumed entity pick chose (Choices$ form: Forge asks
+     * the choice of the attachment first, and a lone one is taken by the
+     * lone-forced shortcut, which consumes gorge's pick); its confirm is the
+     * yes that pick already gave. */
+    private Card attachChosen;
+    private int attachChosenStep = -99;
+
+    /** Answers one Attach confirm from gorge's attachment pick; null when
+     * gorge logged none for it (the caller then misses as before). */
+    private Boolean attachConfirm(SpellAbility sa, Card attachment) {
+        if (attachChosen != null && attachChosenStep == m.step() && attachChosen.equals(attachment)) {
+            attachChosen = null;
+            m.note("attach-confirm step " + m.step() + ": yes " + attachment + " (chosen by the entity pick)");
+            return true;
+        }
+        Decision d = take(x -> x.kind.equals("choose_n") && (x.resume.startsWith("attach") || attachNames(x, attachment)));
+        if (d != null) {
+            attachStep = m.step();
+            attachHost = sa.getHostCard();
+            attachYes = new ArrayList<>();
+            for (String r : d.refs()) {
+                if (!r.isBlank()) {
+                    attachYes.add(m.card(r));
+                }
+            }
+            m.note("attach pick step " + m.step() + ": " + d.refs());
+        } else if (attachStep != m.step() || attachHost != sa.getHostCard()) {
+            return null;
+        }
+        boolean yes = attachYes.remove(attachment);
+        m.note("attach-confirm step " + m.step() + ": " + (yes ? "yes " : "no ") + attachment);
+        return yes;
+    }
+
+    private boolean attachNames(Decision d, Card attachment) {
+        if (!DecisionQueue.isObjectChoice(d)) {
+            return false;
+        }
+        for (String r : d.refs()) {
+            try {
+                if (attachment.equals(m.entity(r))) {
+                    return true;
+                }
+            } catch (HarnessError notFound) {
+                // not a ref of this game
+            }
+        }
+        return false;
+    }
+
     @Override
     public boolean confirmBidAction(SpellAbility sa, PlayerActionConfirmMode bidlife, String string, int bid, Player winner) {
         Boolean b = m.yesNo(seat, "bid " + string);
@@ -587,6 +661,17 @@ public class ScriptedController extends PlayerControllerAi {
         // outcome itself (Request.coinFlips).
         if (kindOfChoice == BinaryChoiceType.HeadsOrTails && !m.req.coinFlips(m.step()).isEmpty()) {
             return true;
+        }
+        if (kindOfChoice == BinaryChoiceType.LeftOrRight) {
+            // ChooseDirectionEffect: true means Left. gorge's pick kind is
+            // "direction", the label "left" or "right".
+            Decision dir = take(x -> x.kind.equals("choose_n") && x.picks.size() == 1
+                    && (x.pickKinds.contains("direction") || x.resume.equals("choosedirection")));
+            if (dir != null) {
+                boolean left = dir.picks.get(0).trim().equalsIgnoreCase("left");
+                m.note("binary step " + m.step() + " (LeftOrRight): " + (left ? "left" : "right") + " " + dir.picks);
+                return left;
+            }
         }
         Decision d = binaryPick(kindOfChoice);
         if (d != null) {
@@ -1053,6 +1138,7 @@ public class ScriptedController extends PlayerControllerAi {
             // this ask, so it is consumed rather than left over.
             T only = optionList.get(0);
             if (m.takeLonePick(seat, only)) {
+                rememberAttachChoice(sa, params, only);
                 m.note("entity (" + title + "): lone option, gorge's pick consumed");
             } else {
                 m.note("entity (" + title + "): lone forced option");
@@ -1061,9 +1147,23 @@ public class ScriptedController extends PlayerControllerAi {
         }
         List<T> picked = m.pickObjects(seat, optionList, isOptional ? 0 : 1, 1, "entity (" + title + ")");
         if (picked != null) {
+            if (!picked.isEmpty()) {
+                rememberAttachChoice(sa, params, picked.get(0));
+            }
             return picked.isEmpty() ? null : picked.get(0);
         }
         return super.chooseSingleEntityForEffect(optionList, delayedReveal, sa, title, isOptional, relatedPlayer, params);
+    }
+
+    /** An Optional$ Attach's Choices$ form asks which attachment first (params
+     * carry "Target"; the later ask for the attached-to entity carries
+     * "Attachments"). A gorge pick that chose it is the yes its confirm needs. */
+    private void rememberAttachChoice(SpellAbility sa, Map<String, Object> params, GameEntity chosen) {
+        if (sa != null && sa.getApi() == ApiType.Attach && sa.hasParam("Optional") && !sa.hasParam("Object")
+                && params != null && params.containsKey("Target") && chosen instanceof Card c) {
+            attachChosen = c;
+            attachChosenStep = m.step();
+        }
     }
 
     @Override
