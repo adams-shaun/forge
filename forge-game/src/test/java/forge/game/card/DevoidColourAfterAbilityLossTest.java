@@ -24,7 +24,6 @@ import forge.game.Game;
 import forge.game.GameRules;
 import forge.game.GameType;
 import forge.game.Match;
-import forge.game.ability.AbilityFactory;
 import forge.game.ability.AbilityUtils;
 import forge.game.player.IGameEntitiesFactory;
 import forge.game.player.Player;
