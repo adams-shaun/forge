@@ -7108,34 +7108,35 @@ public class Card extends GameEntity implements Comparable<Card>, IHasSVars, ITr
     }
 
     /**
-     * The layer-4 "is every creature type" statics (Changeling) of keyword
-     * instances that an immediate, non-layered "loses all abilities" (AnimateAll
-     * RemoveAllAbilities$, as Curious Colossus) has taken out of the keyword
-     * cache. CR 702.73a makes Changeling a characteristic-defining ability, so
-     * it applies in layer 4 (CR 613.1d), before any layer-6 ability loss
-     * (CR 613.1f), and CR 613.6 keeps it applying to that object afterwards.
-     * Forge's immediate removal makes {@link #getStaticAbilities} lose the
-     * static before the type layer runs, so the caller adds these back.
+     * The characteristic-defining statics (Changeling's every creature type,
+     * Devoid's colorless) of keyword instances that an immediate, non-layered
+     * "loses all abilities" (Animate/AnimateAll RemoveAllAbilities$, as Humble or
+     * Curious Colossus) has taken out of the keyword cache. A CDA applies in its
+     * own layer (CR 604.3, 613.3): Changeling in layer 4, Devoid in layer 5, both
+     * before any layer-6 ability loss (CR 613.1f), and CR 613.6 keeps it applying
+     * to that object afterwards. Forge's immediate removal makes
+     * {@link #getStaticAbilities} lose the static before those layers run, so
+     * the caller adds these back.
      */
-    public final List<StaticAbility> getTypeStaticsLostWithKeywords() {
+    public final List<StaticAbility> getCharacteristicStaticsLostWithKeywords() {
         final CardState state = currentState;
         final KeywordCollection kept = getUnhiddenKeywords(state);
         List<StaticAbility> result = Collections.emptyList();
-        result = addLostTypeStatics(result, state.getIntrinsicKeywords(), kept);
+        result = addLostCharacteristicStatics(result, state.getIntrinsicKeywords(), kept);
         for (final KeywordsChange kc : changedCardKeywords.values()) {
-            result = addLostTypeStatics(result, kc.getKeywords(), kept);
+            result = addLostCharacteristicStatics(result, kc.getKeywords(), kept);
         }
         return result;
     }
 
-    private static List<StaticAbility> addLostTypeStatics(List<StaticAbility> result,
+    private static List<StaticAbility> addLostCharacteristicStatics(List<StaticAbility> result,
             final Collection<KeywordInterface> candidates, final KeywordCollection kept) {
         for (final KeywordInterface inst : candidates) {
-            if (inst.getKeyword() != Keyword.CHANGELING || kept.getValues(Keyword.CHANGELING).contains(inst)) {
+            if (kept.getValues(inst.getKeyword()).contains(inst)) {
                 continue;
             }
             for (final StaticAbility stAb : inst.getStaticAbilities()) {
-                if (stAb.hasParam("CharacteristicDefining") && stAb.hasParam("AddAllCreatureTypes")) {
+                if (stAb.hasParam("CharacteristicDefining")) {
                     if (result.isEmpty()) {
                         result = new ArrayList<>();
                     }
