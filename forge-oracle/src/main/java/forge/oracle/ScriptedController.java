@@ -529,6 +529,7 @@ public class ScriptedController extends PlayerControllerAi {
     public boolean applyManaToCost(ManaCostBeingPaid toPay, SpellAbility ability, String prompt, ManaConversionMatrix matrix, boolean effect) {
         ManaPool pool = player.getManaPool();
         int before = pool.totalMana();
+        payPhyrexianWithLife(toPay, ability);
         // the spend gorge recorded for this step, in its order, before Forge's
         // own pass picks which units pay a hybrid or generic pip
         for (char c : m.takeRecordedPayment().toCharArray()) {
@@ -562,6 +563,27 @@ public class ScriptedController extends PlayerControllerAi {
         }
         m.note("pay mana: pool " + before + " -> " + pool.totalMana() + ", paid=" + toPay.isPaid() + " for " + ability.getHostCard().getName());
         return toPay.isPaid();
+    }
+
+    /** Pays each Phyrexian pip gorge paid with 2 life (CR 107.4f, 118.3b): its
+     * pay_life pick of this step, one pick per pip. Forge's AI does the same in
+     * ComputerUtilMana.payManaCost (payPhyrexian, then payLife(2)), but the
+     * scripted controller pays only mana, so the pip stayed unpaid and the
+     * cast was refused. A pip gorge recorded no pay_life pick for stays a mana
+     * pip, so a mana payment stays a mana payment. The pick is not taken when
+     * the player cannot pay the life, so a refusal is Forge's own. */
+    private void payPhyrexianWithLife(ManaCostBeingPaid toPay, SpellAbility ability) {
+        while (toPay.containsPhyrexianMana() && player.canPayLife(2, false, ability)) {
+            Decision d = take(x -> x.pickKinds.contains("pay_life"));
+            if (d == null) {
+                return;
+            }
+            toPay.payPhyrexian();
+            ability.setSpendPhyrexianMana(true);
+            player.payLife(2, ability, false);
+            m.note("pay phyrexian with 2 life step " + m.step() + " for " + ability.getHostCard().getName()
+                    + ": life " + player.getLife());
+        }
     }
 
     /** The engine's own exact-colour pass, then the generic remainder in the
