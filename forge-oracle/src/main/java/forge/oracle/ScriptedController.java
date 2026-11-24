@@ -1346,6 +1346,10 @@ public class ScriptedController extends PlayerControllerAi {
         if (faces.size() == 1) {
             return faces.get(0);
         }
+        ICardFace dungeon = m.chooseDungeon(seat, faces);
+        if (dungeon != null) {
+            return dungeon;
+        }
         return missThen("card face", () -> super.chooseSingleCardFace(sa, faces, message));
     }
 
