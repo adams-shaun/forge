@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.google.common.collect.Lists;
 import com.google.gson.JsonArray;
@@ -32,11 +34,13 @@ import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
 import forge.game.card.CounterEnumType;
 import forge.game.card.CounterType;
+import forge.game.keyword.Keyword;
 import forge.game.mana.Mana;
 import forge.game.phase.PhaseHandler;
 import forge.game.phase.PhaseType;
 import forge.game.player.Player;
 import forge.game.player.RegisteredPlayer;
+import forge.game.replacement.ReplacementEffect;
 import forge.game.spellability.AbilitySub;
 import forge.game.spellability.OptionalCostValue;
 import forge.game.spellability.SpellAbility;
@@ -68,6 +72,9 @@ import forge.oracle.DecisionQueue.Decision;
 public final class StepMachine {
     static final int LOOP_GUARD = 4000;
     static final int TURN_SLACK = 4;
+    /** The card name in gorge's dredge label: "Dredge N (mill, then return
+     * &lt;name&gt; to hand)". */
+    private static final Pattern DREDGE_NAMED = Pattern.compile("return (.+) to hand");
 
     final Request req;
     final boolean strict;
@@ -2051,6 +2058,92 @@ public final class StepMachine {
         }
         note("arrange step " + stepIdx + ": top " + top.size() + ", away " + rest.size());
         return List.of(top, rest);
+    }
+
+    /** True for the host of Dredge's replacement (CR 702.52a). Forge builds
+     * the keyword as an Optional$ replacement on the card; the keyword is
+     * still on the host in the graveyard, where the replacement is active. */
+    static boolean isDredgeHost(Card host) {
+        return host != null && host.hasKeyword(Keyword.DREDGE);
+    }
+
+    /** True when a dredge pick names host. gorge writes the label "Dredge N
+     * (mill, then return &lt;name&gt; to hand)", so read the name out of the
+     * label instead of matching the host anywhere in it (a name that is a
+     * prefix of another could otherwise answer the wrong dredger). */
+    static boolean dredgeNamesHost(String label, Card host) {
+        if (!isDredgeHost(host) || label == null) {
+            return false;
+        }
+        Matcher m = DREDGE_NAMED.matcher(label);
+        return m.find() ? m.group(1).equalsIgnoreCase(host.getName())
+                : label.equalsIgnoreCase(host.getName());
+    }
+
+    /** Among the replacements Forge offers for one draw, the dredger gorge's
+     * pending pick names; null when no dredge ask is pending or the pick is
+     * the ordinary draw. */
+    ReplacementEffect dredgeReplacementPick(int seat, List<ReplacementEffect> possibleReplacers) {
+        Decision d = peek(seat, x -> x.resume.equals("dredge"));
+        if (d == null || d.picks.isEmpty() || !d.pickKinds.contains("dredge")) {
+            return null;
+        }
+        for (ReplacementEffect re : possibleReplacers) {
+            if (dredgeNamesHost(d.picks.get(0), re.getHostCard())) {
+                return re;
+            }
+        }
+        return null;
+    }
+
+    /** Dredge's draw replacement (CR 702.52a). gorge asks once per draw: a
+     * single mode decision (resume "dredge") over every legal dredger (pick
+     * kind "dredge", label "Dredge N (mill, then return &lt;name&gt; to
+     * hand)") plus the ordinary draw (pick kind "draw", "Draw card"). Forge
+     * builds the same keyword as an Optional$ replacement and asks
+     * chooseSingleReplacementEffect (several dredgers) and then
+     * confirmReplacementEffect for the chosen one. Read host's answer from
+     * the pick: true for its own dredge, false for another dredger or for the
+     * ordinary draw. The ordinary draw is consumed only on the last dredge
+     * replacement Forge still has queued (its {@code later} choices): with
+     * several dredgers every confirm must say no, or a later one falls back
+     * to the AI and applies a dredge gorge declined. A dredge pick naming
+     * another host is declined without consuming it, so the decision reaches
+     * the replacement it names. */
+    Boolean dredgeReplacement(int seat, Card host, List<ReplacementEffect> later) {
+        if (!isDredgeHost(host)) {
+            return null;
+        }
+        Decision d = peek(seat, x -> x.resume.equals("dredge"));
+        if (d == null) {
+            return null;
+        }
+        if (d.picks.isEmpty() || d.pickKinds.contains("draw")) {
+            boolean more = false;
+            if (later != null) {
+                for (ReplacementEffect re : later) {
+                    if (isDredgeHost(re.getHostCard())) {
+                        more = true;
+                        break;
+                    }
+                }
+            }
+            if (!more) {
+                d.consumed = true;
+            }
+            note("dredge-replacement step " + stepIdx + ": no" + (more ? " (another dredger is queued)" : ""));
+            return false;
+        }
+        if (!d.pickKinds.contains("dredge")) {
+            return null;
+        }
+        if (dredgeNamesHost(d.picks.get(0), host)) {
+            d.consumed = true;
+            note("dredge-replacement step " + stepIdx + ": yes " + d.picks.get(0));
+            return true;
+        }
+        note("dredge-replacement step " + stepIdx + ": no (gorge chose another dredger)");
+        return false;
     }
 
     /** A clone-style "may enter as a copy" replacement: gorge's clone pick is

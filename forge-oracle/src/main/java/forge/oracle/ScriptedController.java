@@ -461,6 +461,14 @@ public class ScriptedController extends PlayerControllerAi {
         if (clone != null) {
             return clone;
         }
+        // Dredge is an Optional$ replacement in Forge and a mode ask over
+        // every dredger plus the ordinary draw in gorge (resume "dredge"). A
+        // resume-specific peek, like cloneReplacement above, so the generic
+        // yes/no path never mistakes it for one.
+        Boolean dredge = m.dredgeReplacement(seat, replacementEffect.getHostCard(), replacementEffect.getOtherChoices());
+        if (dredge != null) {
+            return dredge;
+        }
         if (m.step() < 0 && !m.hasSetupYesNo(seat)) {
             // Setup placement: gorge's xmageFixture places a clone as itself
             // unless a setup answer (step -1) says otherwise.
@@ -1339,6 +1347,14 @@ public class ScriptedController extends PlayerControllerAi {
     public ReplacementEffect chooseSingleReplacementEffect(List<ReplacementEffect> possibleReplacers) {
         if (possibleReplacers.size() == 1) {
             return possibleReplacers.get(0);
+        }
+        // With several dredgers Forge first asks which replacement to apply;
+        // gorge's single dredge pick already named it, so hand Forge that
+        // host's replacement and let confirmReplacementEffect answer yes.
+        ReplacementEffect dredge = m.dredgeReplacementPick(seat, possibleReplacers);
+        if (dredge != null) {
+            m.note("replacement order step " + m.step() + ": dredge " + dredge.getHostCard().getName());
+            return dredge;
         }
         // gorge poses a "replacement" decision only when the order is
         // observable (decision.KReplacement); with none logged it applied them
