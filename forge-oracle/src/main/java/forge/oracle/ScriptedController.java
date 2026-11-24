@@ -662,44 +662,87 @@ public class ScriptedController extends PlayerControllerAi {
         if (kindOfChoice == BinaryChoiceType.HeadsOrTails && !m.req.coinFlips(m.step()).isEmpty()) {
             return true;
         }
-        if (kindOfChoice == BinaryChoiceType.LeftOrRight) {
-            // ChooseDirectionEffect: true means Left. gorge's pick kind is
-            // "direction", the label "left" or "right".
-            Decision dir = take(x -> x.kind.equals("choose_n") && x.picks.size() == 1
-                    && (x.pickKinds.contains("direction") || x.resume.equals("choosedirection")));
-            if (dir != null) {
-                boolean left = dir.picks.get(0).trim().equalsIgnoreCase("left");
-                m.note("binary step " + m.step() + " (LeftOrRight): " + (left ? "left" : "right") + " " + dir.picks);
-                return left;
-            }
-        }
         Decision d = binaryPick(kindOfChoice);
         if (d != null) {
-            // An empty answer reads as "tap" (gorge's taporuntap/taporuntapall
-            // contract: the first, state-changing option is the default).
-            boolean tap = d.picks.isEmpty() || d.pickKinds.contains("tap");
-            m.note("binary step " + m.step() + " (" + kindOfChoice + "): " + (tap ? "tap" : "untap") + " " + d.picks);
-            return tap;
+            Boolean answer = binaryAnswer(kindOfChoice, d);
+            if (answer != null) {
+                return answer;
+            }
         }
         m.miss("binary", question);
         return super.chooseBinary(sa, question, kindOfChoice, defaultChoice);
     }
 
     /** The one gorge decision that answers a BinaryChoiceType, or null when
-     * the kind has no mapping yet. TapOrUntap is gorge's 1-of-2 object pick
-     * with option kinds "tap"/"untap" (true means tap). A new kind is one case
-     * here, and an unmapped kind still misses loudly, never a silent AI
-     * answer. */
+     * the kind has no mapping yet. A new kind is one case here plus its answer
+     * in {@link #binaryAnswer}, and an unmapped kind still misses loudly,
+     * never a silent AI answer. */
     private Decision binaryPick(BinaryChoiceType kind) {
-        if (kind == BinaryChoiceType.TapOrUntap) {
+        switch (kind) {
+        case TapOrUntap:
             // By role (resume taporuntap / taporuntapall) so an empty answer,
             // which has no pick kinds, is found too; the pick kinds remain a
             // fallback for a decision logged without a resume.
             return take(x -> x.kind.equals("choose_n")
                     && (x.resume.equals("taporuntap") || x.resume.equals("taporuntapall")
                             || x.pickKinds.contains("tap") || x.pickKinds.contains("untap")));
+        case LeftOrRight:
+            // ChooseDirectionEffect: true means Left. gorge's pick kind is
+            // "direction", the label "left" or "right".
+            return take(x -> x.kind.equals("choose_n") && x.picks.size() == 1
+                    && (x.pickKinds.contains("direction") || x.resume.equals("choosedirection")));
+        case OddsOrEvens:
+            // Extinction Event's resolution ask is choose_n[odd] "odd";
+            // Gollum, Riddle Master's as-enters ask is choose_n[evenodd]
+            // "Odd" (resume "etb"). Match the pick-kind role, not a resume
+            // string, and fall back to the label only when gorge logged no
+            // kinds, so another even/odd ask is still covered.
+            return take(x -> {
+                if (!x.kind.equals("choose_n") || x.picks.size() != 1) {
+                    return false;
+                }
+                if (x.pickKinds.contains("odd") || x.pickKinds.contains("even")
+                        || x.pickKinds.contains("evenodd")) {
+                    return true;
+                }
+                if (!x.pickKinds.isEmpty()) {
+                    return false;
+                }
+                String pick = x.picks.get(0).trim();
+                return pick.equalsIgnoreCase("odd") || pick.equalsIgnoreCase("even");
+            });
+        default:
+            return null;
         }
-        return null;
+    }
+
+    /** The boolean a mapped decision answers for kind, with the note naming
+     * the answer; null when the decision cannot answer that kind. The
+     * tap/untap default belongs to TapOrUntap only. */
+    private Boolean binaryAnswer(BinaryChoiceType kind, Decision d) {
+        switch (kind) {
+        case TapOrUntap: {
+            // An empty answer reads as "tap" (gorge's taporuntap/taporuntapall
+            // contract: the first, state-changing option is the default).
+            boolean tap = d.picks.isEmpty() || d.pickKinds.contains("tap");
+            m.note("binary step " + m.step() + " (" + kind + "): " + (tap ? "tap" : "untap") + " " + d.picks);
+            return tap;
+        }
+        case LeftOrRight: {
+            boolean left = d.picks.get(0).trim().equalsIgnoreCase("left");
+            m.note("binary step " + m.step() + " (" + kind + "): " + (left ? "left" : "right") + " " + d.picks);
+            return left;
+        }
+        case OddsOrEvens: {
+            // true means Odd, whatever the label's case (gorge logs "odd" in
+            // a resolution and "Odd" at an as-enters choice).
+            boolean odd = d.picks.get(0).trim().equalsIgnoreCase("odd");
+            m.note("binary step " + m.step() + " (" + kind + "): " + (odd ? "odd" : "even") + " " + d.picks);
+            return odd;
+        }
+        default:
+            return null;
+        }
     }
 
     /** The params overload is the one Forge's AddOrRemove asks
