@@ -309,9 +309,11 @@ public final class DecisionQueue {
 
     /** gorge's Delve ask (CR 702.66a): one choose whose every pick kind is
      * "exile", each naming a card in the caster's graveyard to exile for a
-     * generic mana. No other gorge ask uses the "exile" pick kind. */
+     * generic mana. An arrange also uses "exile" (as the destination of its
+     * unpicked cards), so the decide-by-role check is the choose itself:
+     * kind choose_n with gorge_kind choose. */
     public static boolean isDelvePick(Decision d) {
-        if (d.pickKinds.isEmpty()) {
+        if (!d.kind.equals("choose_n") || !d.gorgeKind.equals("choose") || d.pickKinds.isEmpty()) {
             return false;
         }
         for (String k : d.pickKinds) {

@@ -119,7 +119,7 @@ public class DelvePicksTest {
 
     @Test
     public void onlyAnAllExileChooseIsADelvePick() {
-        Decision exile = decision("{\"step\":1,\"seat\":0,\"kind\":\"choose_n\","
+        Decision exile = decision("{\"step\":1,\"seat\":0,\"kind\":\"choose_n\",\"gorge_kind\":\"choose\","
                 + "\"picks\":[\"Island\",\"Island\"],\"pick_refs\":[\"p0:Island#1\",\"p0:Island#2\"],"
                 + "\"pick_kinds\":[\"exile\",\"exile\"]}");
         assertTrue(DecisionQueue.isDelvePick(exile));
@@ -130,6 +130,12 @@ public class DelvePicksTest {
                 + "\"picks\":[\"Island\",\"Forest\"],\"pick_refs\":[\"p0:Island#1\",\"p0:Forest#1\"],"
                 + "\"pick_kinds\":[\"exile\",\"convoke_generic\"]}");
         assertTrue(!DecisionQueue.isDelvePick(mixed), "every pick kind must be exile");
+        // gorge also uses "exile" as an arrange's unpicked-card destination,
+        // which is an order, not the Delve choose.
+        Decision arrange = decision("{\"step\":1,\"seat\":0,\"kind\":\"order\","
+                + "\"gorge_kind\":\"arrange\",\"picks\":[\"Island\"],"
+                + "\"pick_refs\":[\"p0:Island#1\"],\"pick_kinds\":[\"exile\"]}");
+        assertTrue(!DecisionQueue.isDelvePick(arrange), "an arrange's exile remainder is not Delve");
     }
 
     private static Decision decision(String json) {
