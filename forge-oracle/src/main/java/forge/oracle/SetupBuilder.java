@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import com.google.common.collect.HashMultiset;
+import com.google.common.collect.Multiset;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
@@ -19,6 +21,7 @@ import forge.game.GameEntityCounterTable;
 import forge.game.card.Card;
 import forge.game.card.CardFactory;
 import forge.game.card.CounterEnumType;
+import forge.game.card.CounterKeywordType;
 import forge.game.card.CounterType;
 import forge.game.player.Player;
 import forge.game.trigger.TriggerHandler;
@@ -472,16 +475,46 @@ final class SetupBuilder {
             p.getZone(ZoneType.Battlefield).add(t);
             JsonElement cs = spec.get("counters");
             if (cs != null && cs.isJsonObject()) {
+                Map<String, Integer> kinds = new LinkedHashMap<>();
                 for (Map.Entry<String, JsonElement> kind : cs.getAsJsonObject().entrySet()) {
-                    CounterType ct = CounterType.getType(kind.getKey());
-                    if (ct == null) {
-                        throw new HarnessError("unknown counter kind " + kind.getKey());
-                    }
-                    // A raw setter: no counter-table replacement, no trigger.
-                    t.setCounters(ct, kind.getValue().getAsInt());
+                    kinds.put(kind.getKey(), kind.getValue().getAsInt());
                 }
+                setTokenCounters(t, kinds);
             }
         }
+    }
+
+    /** Sets a setup token's counters outright. Card.setCounters(Multiset) is
+     * the one setter that also builds a keyword counter's static ability and
+     * refreshes keywords (CR 122.1b: a lifelink counter grants lifelink); the
+     * GameEntity setter used before only wrote the counter table. It still
+     * does no counter-table replacement and runs no trigger. */
+    static void setTokenCounters(Card t, Map<String, Integer> kinds) {
+        Multiset<CounterType> all = HashMultiset.create();
+        for (Map.Entry<String, Integer> kind : kinds.entrySet()) {
+            all.setCount(counterType(kind.getKey()), kind.getValue());
+        }
+        t.setCounters(all);
+    }
+
+    /** The Forge counter type for a gorge counter kind. Gorge names a keyword
+     * counter in capitals with no spaces (LIFELINK, FIRSTSTRIKE); Forge's
+     * CounterType.getType matches the keyword's own spelling ("Lifelink",
+     * "First Strike") and files anything else as a custom counter, which
+     * grants nothing. Match the keyword counters first, ignoring case, spaces
+     * and underscores. */
+    static CounterType counterType(String kind) {
+        String want = kind.replace(" ", "").replace("_", "");
+        for (CounterType ct : CounterKeywordType.getValues()) {
+            if (ct.isKeywordCounter() && ct.toString().replace(" ", "").equalsIgnoreCase(want)) {
+                return ct;
+            }
+        }
+        CounterType ct = CounterType.getType(kind);
+        if (ct == null) {
+            throw new HarnessError("unknown counter kind " + kind);
+        }
+        return ct;
     }
 
     /** Links an Aura (or Equipment) placed by setup to its bearer, with the
@@ -636,10 +669,7 @@ final class SetupBuilder {
             if (e.getValue() == 0) {
                 throw new HarnessError("setup counters " + e.getKey() + " on " + c.getName() + " is zero");
             }
-            CounterType t = CounterType.getType(e.getKey());
-            if (t == null) {
-                throw new HarnessError("unknown counter kind " + e.getKey());
-            }
+            CounterType t = counterType(e.getKey());
             c.addCounter(t, e.getValue(), p, table);
         }
         // etb: the counters are the board as stated, so no AddCounter
