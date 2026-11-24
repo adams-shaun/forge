@@ -1437,8 +1437,49 @@ public final class StepMachine {
         if (d == null) {
             return null;
         }
+        List<SpellAbility> out = matchGenericChoices(spells, d.picks);
+        if (out == null) {
+            miss("generic choice", "gorge choices " + d.picks + " match no Forge choice");
+            return null;
+        }
+        note("generic choice step " + stepIdx + ": " + d.picks);
+        return out;
+    }
+
+    /** A GenericChoice whose Forge choice list has no more entries than it
+     * needs: ChooseGenericEffect drops every choice with an unpayable
+     * UnlessCost and still calls chooseSpellAbilitiesForEffect with the
+     * survivors, so Forge asks nothing while gorge logs the one-option (or
+     * all-forced) mode decision. The matching decision must be consumed here
+     * or it is left over. Only a decision whose picks name every offered
+     * spell is taken; otherwise the queue is untouched and the caller keeps
+     * Forge's list. Returns the matched spells, or null when no decision
+     * answers this ask. */
+    List<SpellAbility> takeForcedGenericModes(int seat, List<SpellAbility> spells, int num) {
+        if (spells.isEmpty()) {
+            return null;
+        }
+        Decision d = peek(seat, x -> x.kind.equals("mode") && !x.picks.isEmpty() && x.picks.size() <= num
+                && !x.resume.equals("unless_pay") && !x.resume.equals("cast_modes"));
+        if (d == null) {
+            return null;
+        }
+        List<SpellAbility> out = matchGenericChoices(spells, d.picks);
+        if (out == null || out.size() != spells.size()) {
+            return null;
+        }
+        d.consumed = true;
+        note("generic choice step " + stepIdx + " (forced): " + d.picks);
+        return out;
+    }
+
+    /** The spells a mode ask's picks name, one per pick in pick order, or null
+     * when any pick names none of the offered spells. Shared by the asked and
+     * the forced (Forge-offers-no-choice) paths so their label matching cannot
+     * drift. */
+    private static List<SpellAbility> matchGenericChoices(List<SpellAbility> spells, List<String> picks) {
         List<SpellAbility> out = new ArrayList<>();
-        for (String label : d.picks) {
+        for (String label : picks) {
             SpellAbility hit = null;
             for (SpellAbility sp : spells) {
                 if (out.contains(sp)) {
@@ -1457,12 +1498,10 @@ public final class StepMachine {
                 }
             }
             if (hit == null) {
-                miss("generic choice", "gorge choice \"" + label + "\" matches no Forge choice");
                 return null;
             }
             out.add(hit);
         }
-        note("generic choice step " + stepIdx + ": " + d.picks);
         return out;
     }
 
@@ -1668,13 +1707,14 @@ public final class StepMachine {
     }
 
     /** The CR 404.3 order of a simultaneous multi-card graveyard move, and
-     * any library arrange Forge asks as its own question (dig/hideaway
-     * bottom, library placement). gorge's order travels as an "order"
-     * decision (gorge_kind "graveyard_order" for the graveyard pin, one pick
-     * per card in gorge's order); the selection decision was already consumed
-     * when the move started. Identical names make the order unobservable, but
-     * Forge still asks, so the matching decision is consumed rather than left
-     * over. */
+     * any library/exile order Forge asks as its own question (dig/hideaway
+     * bottom, library placement, a top/bottom split). gorge's order travels as
+     * an "order" decision (gorge_kind "graveyard_order" for the graveyard pin,
+     * one pick per card in gorge's order); the selection decision was already
+     * consumed when the move started. The graveyard pin is a separate role, so
+     * a library ask never consumes it and vice versa. Identical names make the
+     * order unobservable, but Forge still asks, so the matching decision is
+     * consumed rather than left over. */
     List<Card> orderCards(int seat, Collection<Card> cards, String what) {
         Set<String> names = new HashSet<>();
         for (Card c : cards) {
@@ -1689,13 +1729,9 @@ public final class StepMachine {
             }
             return new ArrayList<>(cards);
         }
-        if (!what.contains("Graveyard")) {
-            // The pin is graveyard-specific. A library/exile order is still
-            // unscripted, and a leftover graveyard pin must not answer it.
-            miss("order", what);
-            return null;
-        }
-        Decision d = take(seat, DecisionQueue::isGraveyardOrder);
+        Decision d = what.contains("Graveyard")
+                ? take(seat, DecisionQueue::isGraveyardOrder)
+                : take(seat, DecisionQueue::isCardOrder);
         return orderCardsByPicks(cards, d, what, Card::getName);
     }
 

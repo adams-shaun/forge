@@ -32,6 +32,10 @@ public class OrderCardsTest {
             + "\"pick_refs\":[\"p0:Forest#4\",\"p0:Forest#5\",\"p0:Forest#6\",\"p0:Forest#7\"],"
             + "\"pick_kinds\":[\"dig_bottom\",\"dig_bottom\",\"dig_bottom\",\"dig_bottom\"],"
             + "\"resume\":\"dig_arrange\",\"gorge_kind\":\"arrange\",\"options\":4,\"min\":4,\"max\":4}]";
+    private static final String DIG_BOTTOM_DIFFERENT = "[{\"step\":0,\"seat\":0,\"kind\":\"order\","
+            + "\"picks\":[\"Island\",\"Mountain\",\"Island\",\"Island\"],"
+            + "\"pick_kinds\":[\"dig_bottom\",\"dig_bottom\",\"dig_bottom\",\"dig_bottom\"],"
+            + "\"resume\":\"dig_arrange\",\"gorge_kind\":\"arrange\",\"options\":4,\"min\":4,\"max\":4}]";
 
     @BeforeClass
     public void boot() {
@@ -133,6 +137,26 @@ public class OrderCardsTest {
         assertEquals(got, cards);
         assertTrue(m.notes.toString().contains("identical names"), m.notes.toString());
         assertNull(m.take(0, DecisionQueue::isCardOrder), "the same-name card order is consumed once");
+        assertNull(m.dq.leftover());
+    }
+
+    /** A different-name dig/hideaway order is observable: orderCards must
+     * answer Forge's "order to Library" ask from the picks, in gorge's order,
+     * rather than miss it and leave the decision over. */
+    @Test
+    public void differentNameLibraryOrderIsAnswered() {
+        StepMachine m = machine(DIG_BOTTOM_DIFFERENT);
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Mountain", "Island", "Island", "Island"}) {
+            cards.add(card(m, name));
+        }
+        List<Card> got = m.orderCards(0, cards, "order to Library");
+        assertEquals(got.stream().map(Card::getName).toList(),
+                List.of("Island", "Mountain", "Island", "Island"),
+                "the picks are the bottom order Forge places");
+        assertTrue(m.notes.toString().contains("order step 0: order to Library"), m.notes.toString());
+        assertNull(m.take(0, DecisionQueue::isCardOrder), "the card order is consumed once");
         assertNull(m.dq.leftover());
     }
 }

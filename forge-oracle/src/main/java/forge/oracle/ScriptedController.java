@@ -856,7 +856,11 @@ public class ScriptedController extends PlayerControllerAi {
     @Override
     public List<SpellAbility> chooseSpellAbilitiesForEffect(List<SpellAbility> spells, SpellAbility sa, String title, int num, Map<String, Object> params) {
         if (spells.size() <= num) {
-            return spells;
+            // Forge asks nothing when it offers no more choices than it needs,
+            // but gorge still logs the forced GenericChoice. Consume it when
+            // its picks name every offered spell, so it is not a leftover.
+            List<SpellAbility> forced = m.takeForcedGenericModes(seat, spells, num);
+            return forced != null ? forced : spells;
         }
         List<SpellAbility> picked = m.chooseGenericModes(seat, spells, num);
         if (picked != null) {
@@ -869,7 +873,10 @@ public class ScriptedController extends PlayerControllerAi {
     @Override
     public SpellAbility chooseSingleSpellForEffect(List<SpellAbility> spells, SpellAbility sa, String title, Map<String, Object> params) {
         if (spells.size() == 1) {
-            return spells.get(0);
+            // The one-spell form of the early return above: a lone Forge
+            // choice still corresponds to gorge's recorded (forced) mode.
+            List<SpellAbility> forced = m.takeForcedGenericModes(seat, spells, 1);
+            return forced != null ? forced.get(0) : spells.get(0);
         }
         List<SpellAbility> picked = m.chooseGenericModes(seat, spells, 1);
         if (picked != null) {
