@@ -395,8 +395,44 @@ public class ScriptedController extends PlayerControllerAi {
                 return !more;
             }
         }
+        if (mode == null && sa != null && sa.getApi() == ApiType.Sacrifice
+                && sa.hasParam("Optional") && !sa.hasParam("Echo") && !sa.hasParam("CumulativeUpkeep")) {
+            return sacrificeConfirm(sa);
+        }
         Boolean b = m.yesNo(seat, "confirm " + mode + ": " + message);
         return b != null ? b : super.confirmAction(sa, mode, message, options, cardToShow, params);
+    }
+
+    /** Forge's Optional$ sacrifice is a yes/no first and then a pick of the
+     * permanents (SacrificeEffect: confirmAction(sa, null, "Do you want to
+     * sacrifice?") followed by choosePermanentsToSacrifice), while gorge logs
+     * the whole "sacrifice any number" as ONE 0..N object pick (resume
+     * "sacrifice"). A non-empty pick is the yes and must stay queued for
+     * choosePermanentsToSacrifice; an empty pick is the recorded "none" and is
+     * consumed here so it cannot be a leftover; no pick at all means nothing
+     * was offered, so the only answer is no. A SacValid$ Self sacrifice is the
+     * exception: Forge sacrifices the host on the yes and never asks again, so
+     * the pick is consumed here. */
+    private boolean sacrificeConfirm(SpellAbility sa) {
+        Predicate<Decision> isSacrifice = x -> x.resume.equals("sacrifice");
+        boolean self = "Self".equals(sa.getParamOrDefault("SacValid", "Self"));
+        if (self) {
+            Decision d = take(isSacrifice);
+            boolean yes = d != null && !d.picks.isEmpty();
+            m.note("sacrifice-confirm step " + m.step() + ": " + (yes ? "yes" : "no")
+                    + (d == null ? " (no pick)" : " " + d.picks));
+            return yes;
+        }
+        Decision d = peek(isSacrifice);
+        if (d == null || d.picks.isEmpty()) {
+            if (d != null) {
+                take(isSacrifice);
+            }
+            m.note("sacrifice-confirm step " + m.step() + ": no" + (d == null ? " (no pick)" : " (empty pick)"));
+            return false;
+        }
+        m.note("sacrifice-confirm step " + m.step() + ": yes " + d.picks);
+        return true;
     }
 
     @Override
@@ -446,15 +482,35 @@ public class ScriptedController extends PlayerControllerAi {
         if (kindOfChoice == BinaryChoiceType.HeadsOrTails && !m.req.coinFlips(m.step()).isEmpty()) {
             return true;
         }
+        Decision d = binaryPick(kindOfChoice);
+        if (d != null) {
+            boolean tap = d.pickKinds.contains("tap");
+            m.note("binary step " + m.step() + " (" + kindOfChoice + "): " + (tap ? "tap" : "untap") + " " + d.picks);
+            return tap;
+        }
         m.miss("binary", question);
         return super.chooseBinary(sa, question, kindOfChoice, defaultChoice);
+    }
+
+    /** The one gorge decision that answers a BinaryChoiceType, or null when
+     * the kind has no mapping yet. TapOrUntap is gorge's 1-of-2 object pick
+     * with option kinds "tap"/"untap" (true means tap). A new kind is one case
+     * here, and an unmapped kind still misses loudly, never a silent AI
+     * answer. */
+    private Decision binaryPick(BinaryChoiceType kind) {
+        if (kind == BinaryChoiceType.TapOrUntap) {
+            return take(x -> x.kind.equals("choose_n")
+                    && (x.pickKinds.contains("tap") || x.pickKinds.contains("untap")));
+        }
+        return null;
     }
 
     /** The params overload is the one Forge's AddOrRemove asks
      * (CountersPutOrRemoveEffect, TimeTravelEffect) take. Left unoverridden,
      * PlayerControllerAi answers it through the AI, a silent decision. It
-     * follows the plain overload exactly: a recorded coin flip answers yes,
-     * everything else is a strict miss, never a silent AI answer. */
+     * follows the plain overload exactly: a recorded coin flip or a mapped
+     * decision answers, everything else is a strict miss, never a silent AI
+     * answer. */
     @Override
     public boolean chooseBinary(SpellAbility sa, String question, BinaryChoiceType kindOfChoice, Map<String, Object> params) {
         return chooseBinary(sa, question, kindOfChoice, (Boolean) null);
@@ -495,6 +551,16 @@ public class ScriptedController extends PlayerControllerAi {
             // scenario's tapped and life fields state the board.
             m.note("unless-pay at setup: paid " + cost.toSimpleString());
             return true;
+        }
+        if (alreadyPaid) {
+            // AbilityUtils.handleUnlessCost asks EVERY payer even after one
+            // has paid, though its own comment says a later payment "won't
+            // change anything"; gorge asks each payer in turn only until one
+            // pays, so it logs no answer for the later seats. Decline this
+            // payer without a miss. A seat gorge did log an answer for was
+            // handled above.
+            m.note("unless-pay step " + m.step() + ": p" + seat + " declines (an earlier payer paid)");
+            return false;
         }
         m.miss("unless-pay", cost.toSimpleString() + " for " + sa);
         return super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers);
