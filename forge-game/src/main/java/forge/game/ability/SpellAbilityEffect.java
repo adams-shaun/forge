@@ -644,15 +644,15 @@ public abstract class SpellAbilityEffect {
     }
 
     protected static void registerDelayedTrigger(final SpellAbility sa, String location, final Iterable<Card> crds) {
-        // CR 702.116a: Myriad creates the exile-at-end-of-combat delayed trigger only
-        // "if one or more tokens are created this way". With one opponent and that
-        // opponent defending, ForEach$ OppNonDefendingPlayer is empty and this method
-        // used to register an EndCombat trigger over zero cards, leaving a no-op
-        // ability on the stack. No cards means there is nothing for the delayed
-        // ability to act on, so do not create it. Every AtEOT caller goes through
-        // this method, which covers the next Myriad carrier and every other
-        // empty-set delayed trigger.
-        if (!crds.iterator().hasNext()) {
+        // CR 603.7a: an effect that says "exile it at the beginning of the next end step" creates its delayed
+        // triggered ability when it resolves, whether or not it found anything to act on (Mordor on the March
+        // with no creature card to exile, Devastating Onslaught with X=0): the trigger then does nothing
+        // (CR 603.7c). Only a script that carries AtEOTNeedsCard$ True, whose Oracle text makes the delayed
+        // ability conditional on a card having been affected, skips the registration when crds is empty.
+        // Myriad is the one such text, CR 702.116a: "If one or more tokens are created this way, exile the
+        // tokens at end of combat"; with one opponent and that opponent defending, ForEach$ OppNonDefendingPlayer
+        // is empty and no token, so no delayed trigger exists.
+        if (sa.hasParam("AtEOTNeedsCard") && !crds.iterator().hasNext()) {
             return;
         }
 
