@@ -427,7 +427,8 @@ public class ScriptedController extends PlayerControllerAi {
                 return attach;
             }
         }
-        if (!cancelSearch && mode == PlayerActionConfirmMode.ChangeZoneGeneral && zeroCandidateHiddenConfirm(sa)) {
+        if (!cancelSearch && (mode == null || mode == PlayerActionConfirmMode.ChangeZoneGeneral)
+                && zeroCandidateHiddenConfirm(sa)) {
             m.note("zero-candidate confirm step " + m.step() + ": no (" + message + ")");
             return false;
         }
@@ -435,20 +436,22 @@ public class ScriptedController extends PlayerControllerAi {
         return b != null ? b : super.confirmAction(sa, mode, message, options, cardToShow, params);
     }
 
-    /** Whether this is an Optional$ hidden-origin ChangeZone gate with nothing
-     * that could move, which gorge never poses: "you may put onto the
-     * battlefield any number of Aura cards ... from your hand and/or graveyard"
-     * (Bruna, Light of Alabaster) with none there is a choice of zero cards, so
-     * gorge logs no ask, while Forge still asks "Search your hand and
-     * graveyard?". Answering no changes nothing on the board. It holds only
-     * when no yes/no decision is queued for the seat, the origin is not the
-     * battlefield or stack, ChangeNum$ does not evaluate to 0, and no card in
-     * the Origin$ zones of any player passes the filter ChangeZoneEffect itself
-     * uses (a superset of the searched zones, so a candidate anywhere keeps
-     * the strict miss). A "Cancel Search" prompt is a different confirm and
-     * never reaches here. */
+    /** Whether this is an Optional$ hidden-origin ChangeZone/ChangeZoneAll gate
+     * with nothing that could move, which gorge never poses: "you may put onto
+     * the battlefield any number of Aura cards ... from your hand and/or
+     * graveyard" (Bruna, Light of Alabaster) with none there, or Dawnbreak
+     * Reclaimer's "you may return those cards" when both graveyards held no
+     * creature card, is a choice of zero cards, so gorge logs no ask, while
+     * Forge still asks. Answering no changes nothing on the board. It holds
+     * only when no yes/no decision is queued for the seat, the origin is not
+     * the battlefield or stack, ChangeNum$ does not evaluate to 0, and no card
+     * in the Origin$ zones of any player passes the filter the effect itself
+     * uses (a superset of the moved zones, so a candidate anywhere keeps the
+     * strict miss). A "Cancel Search" prompt is a different confirm and never
+     * reaches here. */
     private boolean zeroCandidateHiddenConfirm(SpellAbility sa) {
-        if (sa == null || sa.getApi() != ApiType.ChangeZone || !sa.hasParam("Optional")
+        if (sa == null || (sa.getApi() != ApiType.ChangeZone && sa.getApi() != ApiType.ChangeZoneAll)
+                || !sa.hasParam("Optional")
                 || !sa.hasParam("Origin") || peek(DecisionQueue::isYesNo) != null) {
             return false;
         }
