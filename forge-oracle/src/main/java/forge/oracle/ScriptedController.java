@@ -86,6 +86,11 @@ public class ScriptedController extends PlayerControllerAi {
     /** Guards {@link #payFromOwnSources} against a mana ability that itself
      * has a mana cost (no basic land does; a chain would re-enter). */
     private boolean payingOwnSources;
+    /** True while payCostToPreventEffect pays on gorge's unless_pay answer: that one
+     * answer IS the payer's choice (CR 118.12), so the engine's per-part "do you want
+     * to pay" confirm inside payCostDuringAbilityResolve (energy, counters, discard,
+     * exile, shards, ...) must not look for a second decision. */
+    private boolean payingUnlessCost;
 
     /** The in-flight ChangeZoneFromAltSource search (OriginAlternative$):
      * gorge posed ONE zone election where Forge asks an initial "search the
@@ -556,6 +561,11 @@ public class ScriptedController extends PlayerControllerAi {
         if (b != null) {
             return b;
         }
+        if (payingUnlessCost) {
+            // The unless_pay answer already chose to pay; confirm the part.
+            m.note("unless-pay confirm step " + m.step() + ": yes (" + string + ")");
+            return true;
+        }
         m.miss("pay", string);
         return super.confirmPayment(costPart, string, sa);
     }
@@ -572,8 +582,15 @@ public class ScriptedController extends PlayerControllerAi {
             // answer but the decline pays. An unaffordable cost is not started
             // (a partial payment would spend life before the mana fails).
             boolean pay = !(pick.startsWith("don't") || pick.startsWith("do not") || pick.startsWith("dont"));
-            boolean paid = pay && forge.ai.ComputerUtilCost.canPayCost(cost, sa, player, true)
-                    && PlaySpellAbility.payCostDuringAbilityResolve(this, player, cost, sa, null);
+            boolean paid = false;
+            if (pay && forge.ai.ComputerUtilCost.canPayCost(cost, sa, player, true)) {
+                payingUnlessCost = true;
+                try {
+                    paid = PlaySpellAbility.payCostDuringAbilityResolve(this, player, cost, sa, null);
+                } finally {
+                    payingUnlessCost = false;
+                }
+            }
             m.note("unless-pay step " + m.step() + ": " + d.picks.get(0) + (pay ? " paid=" + paid : ""));
             return paid;
         }
