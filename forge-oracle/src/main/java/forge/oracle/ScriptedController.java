@@ -25,6 +25,7 @@ import forge.game.GameEntity;
 import forge.game.GameObject;
 import forge.game.GameType;
 import forge.game.PlanarDice;
+import forge.game.ability.AbilityUtils;
 import forge.game.ability.ApiType;
 import forge.game.ability.effects.RollDiceEffect;
 import forge.game.card.Card;
@@ -388,8 +389,15 @@ public class ScriptedController extends PlayerControllerAi {
                 }
             }
         }
-        if (mode == PlayerActionConfirmMode.ChangeZoneGeneral && message != null && message.startsWith("Cancel Search")) {
-            // Forge asks after each searched card; gorge made one pick of up to N.
+        boolean cancelSearch = mode == PlayerActionConfirmMode.ChangeZoneGeneral
+                && message != null && message.startsWith("Cancel Search");
+        if (cancelSearch) {
+            // Forge asks after each searched card; gorge made one pick of up to
+            // N. This prompt is not the Optional$ gate: when no search pick is
+            // in flight it is a strict miss, never a zero-candidate decline, or
+            // Forge's ChangeZoneEffect would loop (`i--; continue`) and its AI
+            // could take a card the recorded pick declined. That includes a
+            // recorded empty pick: pickObjects never arms the carry for one.
             Boolean more = m.searchWantsMore(seat);
             if (more != null) {
                 return !more;
@@ -399,8 +407,73 @@ public class ScriptedController extends PlayerControllerAi {
                 && sa.hasParam("Optional") && !sa.hasParam("Echo") && !sa.hasParam("CumulativeUpkeep")) {
             return sacrificeConfirm(sa);
         }
+        if (!cancelSearch && mode == PlayerActionConfirmMode.ChangeZoneGeneral && zeroCandidateHiddenConfirm(sa)) {
+            m.note("zero-candidate confirm step " + m.step() + ": no (" + message + ")");
+            return false;
+        }
         Boolean b = m.yesNo(seat, "confirm " + mode + ": " + message);
         return b != null ? b : super.confirmAction(sa, mode, message, options, cardToShow, params);
+    }
+
+    /** Whether this is an Optional$ hidden-origin ChangeZone gate with nothing
+     * that could move, which gorge never poses: "you may put onto the
+     * battlefield any number of Aura cards ... from your hand and/or graveyard"
+     * (Bruna, Light of Alabaster) with none there is a choice of zero cards, so
+     * gorge logs no ask, while Forge still asks "Search your hand and
+     * graveyard?". Answering no changes nothing on the board. It holds only
+     * when no yes/no decision is queued for the seat, the origin is not the
+     * battlefield or stack, ChangeNum$ does not evaluate to 0, and no card in
+     * the Origin$ zones of any player passes the filter ChangeZoneEffect itself
+     * uses (a superset of the searched zones, so a candidate anywhere keeps
+     * the strict miss). A "Cancel Search" prompt is a different confirm and
+     * never reaches here. */
+    private boolean zeroCandidateHiddenConfirm(SpellAbility sa) {
+        if (sa == null || sa.getApi() != ApiType.ChangeZone || !sa.hasParam("Optional")
+                || !sa.hasParam("Origin") || peek(DecisionQueue::isYesNo) != null) {
+            return false;
+        }
+        Card host = sa.getHostCard();
+        if (host == null) {
+            return false;
+        }
+        List<ZoneType> origins = ZoneType.listValueOf(sa.getParam("Origin"));
+        if (origins.isEmpty() || origins.stream().anyMatch(z -> z == ZoneType.Battlefield || z == ZoneType.Stack)) {
+            return false;
+        }
+        if (sa.hasParam("ChangeNum")
+                && AbilityUtils.calculateAmount(host, sa.getParam("ChangeNum"), sa) <= 0) {
+            return true;
+        }
+        if (sa.hasParam("Defined") || sa.hasParam("ChooseFromDefined")) {
+            // The effect moves its Defined$ cards, not a ChangeType$ selection;
+            // we cannot prove none can move, so keep the ask visible.
+            return false;
+        }
+        // Mirror ChangeZoneEffect's own candidate filter, not Card.isValid on
+        // the raw ChangeType$: it splits "EACH Creature & Land" per part and
+        // resolves "Triggered.sameName" through the triggering card. A raw
+        // filter reads both as card types no card has and would falsely
+        // conclude nothing can move.
+        String changeType = sa.getParamOrDefault("ChangeType", "");
+        for (Player pl : host.getGame().getPlayers()) {
+            for (ZoneType z : origins) {
+                CardCollectionView inZone = pl.getCardsIn(z);
+                if (changeType.isEmpty()) {
+                    if (!inZone.isEmpty()) {
+                        return false;
+                    }
+                } else if (changeType.startsWith("EACH")) {
+                    for (String eachType : changeType.substring(5).split(" & ")) {
+                        if (!AbilityUtils.filterListByType(inZone, eachType, sa).isEmpty()) {
+                            return false;
+                        }
+                    }
+                } else if (!AbilityUtils.filterListByType(inZone, changeType, sa).isEmpty()) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /** Forge's Optional$ sacrifice is a yes/no first and then a pick of the
