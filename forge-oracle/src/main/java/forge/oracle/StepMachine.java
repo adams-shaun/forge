@@ -2022,6 +2022,24 @@ public final class StepMachine {
         return forge.card.MagicColor.fromName(sym.toLowerCase(java.util.Locale.ROOT));
     }
 
+    /** Venture's dungeon pick (CR 701.49a; gorge's choose_n, pick kind "dungeon"): the offered
+     * face whose name is the picked dungeon, or null when gorge logged no pick or the pick names
+     * none of the offered faces (the ask then misses as before). */
+    forge.card.ICardFace chooseDungeon(int seat, List<forge.card.ICardFace> faces) {
+        Decision d = take(seat, x -> x.kind.equals("choose_n") && x.pickKinds.contains("dungeon") && x.picks.size() == 1);
+        if (d == null) {
+            return null;
+        }
+        for (forge.card.ICardFace f : faces) {
+            if (f.getName().equals(d.picks.get(0))) {
+                note("dungeon step " + stepIdx + ": " + d.picks.get(0));
+                return f;
+            }
+        }
+        miss("card face", "gorge dungeon " + d.picks.get(0) + " is not offered");
+        return null;
+    }
+
     /** A card-name pick ("name" kind). */
     String chooseName(int seat) {
         Decision d = take(seat, x -> x.kind.equals("choose_n") && x.pickKinds.contains("name") && x.picks.size() == 1);

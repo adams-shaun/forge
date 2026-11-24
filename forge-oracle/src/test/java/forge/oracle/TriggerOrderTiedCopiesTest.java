@@ -3,6 +3,7 @@ package forge.oracle;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertSame;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
@@ -102,5 +103,39 @@ public class TriggerOrderTiedCopiesTest {
         } catch (StrictMiss e) {
             assertTrue(e.getMessage().contains("binds no unique Forge trigger"), e.getMessage());
         }
+    }
+
+    private static java.nio.file.Path fixture(String name) {
+        try {
+            java.nio.file.Path p = java.nio.file.Path.of(TriggerOrderTiedCopiesTest.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            while (p != null && !java.nio.file.Files.isDirectory(p.resolve("fixtures"))) {
+                p = p.getParent();
+            }
+            if (p != null) {
+                return p.resolve("fixtures").resolve("trigger-order").resolve(name);
+            }
+        } catch (Exception ignored) {
+            // Fall through to the res-relative path (a jar or a stripped tree).
+        }
+        java.nio.file.Path res = java.nio.file.Path.of(TestRes.res()).toAbsolutePath().normalize();
+        return res.getParent().getParent().resolve("forge-oracle").resolve("fixtures").resolve("trigger-order").resolve(name);
+    }
+
+    /** The xproof find end to end: gorge orders [Dromoka, Dromoka, Nadaar], and Nadaar's venture
+     * then asks for a dungeon (CR 701.49a), which gorge's choose_n[dungeon] pick answers. Before the
+     * fix the order missed and the dungeon pick stayed unconsumed. */
+    @Test
+    public void dromokaAndNadaarReplayStrictly() throws Exception {
+        Request req;
+        try (java.io.BufferedReader in = java.nio.file.Files.newBufferedReader(fixture("dromoka-the-eternal.request.jsonl"),
+                java.nio.charset.StandardCharsets.UTF_8)) {
+            req = Request.parse(in.readLine());
+        }
+        ResultRow row = new StepMachine(req, true).run();
+        assertNull(row.harness, "strict replay failed: " + row.harness);
+        assertNull(row.strictMiss, "strict miss: " + row.strictMiss);
+        assertNull(row.leftover, "unconsumed gorge decision: " + row.leftover);
+        assertTrue(row.notes.stream().anyMatch(n -> n.equals("trigger order step 4: 3 bound")), row.notes.toString());
+        assertTrue(row.notes.stream().anyMatch(n -> n.startsWith("dungeon step 6: Dungeon of the Mad Mage")), row.notes.toString());
     }
 }
