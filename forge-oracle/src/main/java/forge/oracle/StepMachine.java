@@ -1876,17 +1876,19 @@ public final class StepMachine {
             for (String label : d.picks) {
                 SpellAbility best = null;
                 int bestScore = -1;
-                boolean tie = false;
+                List<SpellAbility> tied = new ArrayList<>();
                 for (SpellAbility sa : left) {
                     int sc = triggerScore(label, sa);
                     if (sc > bestScore) {
                         best = sa;
                         bestScore = sc;
-                        tie = false;
+                        tied.clear();
+                        tied.add(sa);
                     } else if (sc == bestScore) {
-                        tie = true;
+                        tied.add(sa);
                     }
                 }
+                boolean tie = tied.size() > 1;
                 if (tie && bestScore >= 4 && pickIdx < refs.size()) {
                     SpellAbility byHost = bySource(refs.get(pickIdx), label, left, bestScore);
                     if (byHost != null) {
@@ -1895,7 +1897,10 @@ public final class StepMachine {
                     }
                 }
                 pickIdx++;
-                if (best == null || bestScore < 4 || (tie && !sameEffect(left))) {
+                // Only the triggers tied on this label compete for it: two copies of one trigger beside a
+                // different trigger (Dromoka, the Eternal twice and Nadaar's venture) are still a unique
+                // answer, so the first copy is taken (their order is unobservable, CR 603.3b).
+                if (best == null || bestScore < 4 || (tie && !sameEffect(tied))) {
                     miss("trigger order", "gorge trigger \"" + label + "\" binds no unique Forge trigger");
                     return null;
                 }
