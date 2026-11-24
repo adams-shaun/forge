@@ -72,6 +72,8 @@ import forge.oracle.DecisionQueue.Decision;
 public final class StepMachine {
     static final int LOOP_GUARD = 4000;
     static final int TURN_SLACK = 4;
+    /** gorge's Unleash pick label for entering with the counter. */
+    private static final String UNLEASH_COUNTER = "Enter with a +1/+1 counter";
     /** The card name in gorge's dredge label: "Dredge N (mill, then return
      * &lt;name&gt; to hand)". */
     private static final Pattern DREDGE_NAMED = Pattern.compile("return (.+) to hand");
@@ -2144,6 +2146,36 @@ public final class StepMachine {
         }
         note("dredge-replacement step " + stepIdx + ": no (gorge chose another dredger)");
         return false;
+    }
+
+    /** True when host has Unleash. */
+    static boolean isUnleashHost(Card host) {
+        return host != null && host.hasKeyword(Keyword.UNLEASH);
+    }
+
+    /** Unleash's optional enters-with-a-counter replacement (CR 702.98a).
+     * gorge asks the controller once as a choose_n over two options, both
+     * pick kind "unleash": "Enter with a +1/+1 counter" and "Enter without a
+     * counter". Forge builds the keyword as an Optional$ ETB replacement and
+     * asks confirmReplacementEffect ("Apply replacement effect of X?"). Read
+     * the answer from the pick: true for the counter, false for the other
+     * label or an empty pick. A resume-specific peek, like cloneReplacement
+     * and dredgeReplacement, so the generic yes/no path never mistakes the
+     * unleash pick for one. null when host lacks Unleash or no unleash pick
+     * is pending. */
+    Boolean unleashReplacement(int seat, Card host) {
+        if (!isUnleashHost(host)) {
+            return null;
+        }
+        Decision d = peek(seat, x -> x.pickKinds.contains("unleash"));
+        if (d == null) {
+            return null;
+        }
+        d.consumed = true;
+        boolean yes = !d.picks.isEmpty() && d.picks.get(0).equalsIgnoreCase(UNLEASH_COUNTER);
+        note("unleash-replacement step " + stepIdx + ": " + (yes ? "yes " : "no ")
+                + (d.picks.isEmpty() ? "(no pick)" : d.picks.get(0)));
+        return yes;
     }
 
     /** A clone-style "may enter as a copy" replacement: gorge's clone pick is

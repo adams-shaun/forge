@@ -469,6 +469,12 @@ public class ScriptedController extends PlayerControllerAi {
         if (dredge != null) {
             return dredge;
         }
+        // Unleash is an Optional$ ETB replacement in Forge and a choose_n over
+        // "Enter with a +1/+1 counter" / "Enter without a counter" in gorge.
+        Boolean unleash = m.unleashReplacement(seat, replacementEffect.getHostCard());
+        if (unleash != null) {
+            return unleash;
+        }
         if (m.step() < 0 && !m.hasSetupYesNo(seat)) {
             // Setup placement: gorge's xmageFixture places a clone as itself
             // unless a setup answer (step -1) says otherwise.
