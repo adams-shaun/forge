@@ -1127,6 +1127,12 @@ public class GameAction {
                     staticAbilities.add(stAb);
                 }
             }
+            // CR 613.6, 702.73a, 702.114a: a keyword CDA (Changeling, Devoid) survives an immediate "loses all abilities"
+            for (StaticAbility stAb : co.getCharacteristicStaticsLostWithKeywords()) {
+                if (stAb.checkMode(StaticAbilityMode.Continuous) && stAb.zonesCheck()) {
+                    staticAbilities.add(stAb);
+                }
+            }
             if (!co.getStaticCommandList().isEmpty()) {
                 staticList.add(co);
             }
@@ -2257,7 +2263,7 @@ public class GameAction {
         reveal(cards, cardOwner, dontRevealToOwner, messagePrefix, true);
     }
     public void reveal(CardCollectionView cards, Player cardOwner, boolean dontRevealToOwner, String messagePrefix, boolean msgAddSuffix) {
-        Card firstCard = Iterables.getFirst(cards, null);
+        Card firstCard = cards.getFirst();
         if (firstCard == null) {
             return;
         }
