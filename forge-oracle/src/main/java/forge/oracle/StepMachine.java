@@ -2004,7 +2004,11 @@ public final class StepMachine {
             return null;
         }
         Integer n = number(d.picks.get(0));
-        return n != null && n >= min && n <= max ? n : null;
+        if (n == null || n < min || n > max) {
+            return null;
+        }
+        note("number step " + stepIdx + ": " + n);
+        return n;
     }
 
     /** gorge logs one counter-kind pick per counter removed: a choose_n with

@@ -30,6 +30,11 @@ import forge.game.zone.ZoneType;
  *     ScriptedCostDecision.visit(CostBlight) recorded a miss for a cost with
  *     nothing to choose instead of using the creature or forcing a lone
  *     one.</li>
+ * <li>Clockwork Avian (and Terra, Magical Adept's Saga chapter): CountersPutEffect's
+ *     UpTo$ ask carries CounterType too, but gorge logs one numeric choose_n
+ *     (resume counter_upto) rather than a kind pick per counter. Routing it
+ *     through the remove-counter branch answered 0 and stranded the number;
+ *     only a RemoveCounter ask may take the per-counter picks.</li>
  * <li>Curator of Destinies / Cloak and Dagger, Entwined: TwoPilesEffect's
  *     Separator$/Chooser$ and ChangeZoneEffect's Chooser$ ask
  *     chooseSingleEntityForEffect even when the defined player list has one
@@ -96,6 +101,18 @@ public class UnmappedAskTest {
                 "the separator/chooser with one member is forced without taking a pick, notes: " + m.notes);
         assertTrue(m.notes.stream().anyMatch(n -> n.equals("pile step 10: First pile [First pile]")),
                 "gorge's twopiles_pick answers chooseCardsPile, notes: " + m.notes);
+    }
+
+    @Test
+    public void putCounterUpToConsumesTheRecordedNumber() throws Exception {
+        StepMachine m = replay("counter-put-upto.jsonl");
+        // The counter total cannot distinguish the answer here: Clockwork
+        // Avian enters with four +1/+0 counters, so this probe's board has
+        // more than MaxFromEffect$ 4 and the put clamps either way. The
+        // recorded number is what must be consumed: the old params branch
+        // answered 0 and left the counter_upto decision stranded.
+        assertTrue(m.notes.stream().anyMatch(n -> n.equals("number step 2: 1")),
+                "the counter_upto number answers the put amount, notes: " + m.notes);
     }
 
     @Test

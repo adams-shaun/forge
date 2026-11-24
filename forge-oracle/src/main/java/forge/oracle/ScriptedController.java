@@ -25,6 +25,7 @@ import forge.game.GameEntity;
 import forge.game.GameObject;
 import forge.game.GameType;
 import forge.game.PlanarDice;
+import forge.game.ability.ApiType;
 import forge.game.ability.effects.RollDiceEffect;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
@@ -451,8 +452,9 @@ public class ScriptedController extends PlayerControllerAi {
 
     /** The params overload is the one Forge's AddOrRemove asks
      * (CountersPutOrRemoveEffect, TimeTravelEffect) take. Left unoverridden,
-     * PlayerControllerAi answers it through the AI, a silent decision; route it
-     * through the same recorded yes/no path (and miss) as the plain overload. */
+     * PlayerControllerAi answers it through the AI, a silent decision. It
+     * follows the plain overload exactly: a recorded coin flip answers yes,
+     * everything else is a strict miss, never a silent AI answer. */
     @Override
     public boolean chooseBinary(SpellAbility sa, String question, BinaryChoiceType kindOfChoice, Map<String, Object> params) {
         return chooseBinary(sa, question, kindOfChoice, (Boolean) null);
@@ -1069,11 +1071,16 @@ public class ScriptedController extends PlayerControllerAi {
     @Override
     public int chooseNumber(SpellAbility sa, String title, int min, int max, Map<String, Object> params) {
         Object kind = params == null ? null : params.get("CounterType");
-        if (kind instanceof CounterType ct) {
-            // RemoveCounter's "any type" (and fixed-type up-to) amount ask:
-            // gorge's per-counter kind picks are the amount. With none and an
-            // "up to" ask, the answer is 0 (no counters removed); a plain
-            // numeric pick (a fixed-type ask) is the fallback.
+        // Two different asks carry a CounterType param. RemoveCounter's
+        // per-counter kind election logs one choose_n[counter] pick per
+        // counter removed, so that run is the amount. CountersPutEffect's
+        // UpTo$/SplitAmount$ ask (and a divided put) carries the same param
+        // but logs ONE numeric choose_n (gorge resume "counter_upto"), so it
+        // belongs on the four-argument numeric path. Only route the ask by
+        // what it is, never by the mere presence of CounterType: a put
+        // answered through takeCounterPicks returns 0 and strands the number
+        // pick (Clockwork Avian, Terra's chapter I).
+        if (kind instanceof CounterType ct && sa != null && sa.getApi() == ApiType.RemoveCounter) {
             int n = m.takeCounterPicks(seat, ct, max);
             if (n >= min) {
                 return n;
@@ -1084,6 +1091,8 @@ public class ScriptedController extends PlayerControllerAi {
                     return plain;
                 }
                 if (min == 0) {
+                    // RemoveCounter's "remove up to N": no counter-kind pick
+                    // means the controller removed none.
                     return 0;
                 }
             }
