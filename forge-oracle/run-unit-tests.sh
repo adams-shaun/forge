@@ -4,6 +4,10 @@
 # $FORGE_ORACLE_DIR/cp.txt plus TestNG, then TestNG with -Xmx1536m. Output
 # stays under forge-oracle/target (a jailed seat can write only its worktree).
 #   systemd-run --user --scope -q -p MemoryMax=2G -p CPUQuota=200% forge-oracle/run-unit-tests.sh
+#   FORGE_ORACLE_TEST_CLASSES=forge.oracle.OneTest forge-oracle/run-unit-tests.sh
+# FORGE_ORACLE_TEST_CLASSES restricts the TestNG run to the named comma-separated
+# classes; the compile still covers every source, so the focused gate proves the
+# whole driver still builds.
 set -euo pipefail
 if [ -z "${FORGE_ORACLE_UNDER_TIMEOUT:-}" ]; then
   export FORGE_ORACLE_UNDER_TIMEOUT=1
@@ -19,7 +23,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT/classes" "$OUT/tmp"
 "$JAVAC" -J-Xmx768m --release 17 -nowarn -encoding UTF-8 -cp "$CP" -d "$OUT/classes" \
   $(find "$HERE/src/main/java" "$HERE/src/test/java" -name '*.java' | sort)
-TESTS=$(cd "$HERE/src/test/java" && find . -name '*Test.java' | sed 's|^\./||; s|\.java$||; s|/|.|g' | sort | paste -sd, -)
+TESTS=${FORGE_ORACLE_TEST_CLASSES:-$(cd "$HERE/src/test/java" && find . -name '*Test.java' | sed 's|^\./||; s|\.java$||; s|/|.|g' | sort | paste -sd, -)}
 exec "$JAVA" -Xmx1536m -XX:+UseSerialGC -Djava.awt.headless=true -Dtinylog.level=warn -Djava.io.tmpdir="$OUT/tmp" \
   -Dforge.oracle.res="${FORGE_RES:-$HERE/../forge-gui/res}" \
   -cp "$OUT/classes:$CP" org.testng.TestNG -usedefaultlisteners false -listener forge.oracle.FailurePrinter -d "$OUT/testng" -testclass "$TESTS" "$@"

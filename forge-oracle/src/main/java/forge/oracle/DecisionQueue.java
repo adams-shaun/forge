@@ -113,6 +113,16 @@ public final class DecisionQueue {
         return null;
     }
 
+    /** The first unconsumed decision at step for seat, or null. */
+    public Decision peekHead(int step, int seat) {
+        for (Decision d : all) {
+            if (!d.consumed && d.step == step && d.seat == seat) {
+                return d;
+            }
+        }
+        return null;
+    }
+
     /** gorge's payment-window asks (contract, gorge cmd/oraclediff/forge.go):
      * the hybrid/Phyrexian pip choice (pick kinds pay_&lt;C&gt;, pay_generic,
      * pay_life) and a mana ability activated while paying (pick kind
