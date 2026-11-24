@@ -301,7 +301,7 @@ public class StaticAbility extends CardTraitBase implements IIdentifiable, Clone
         return layers.contains(layer) && checkConditions(StaticAbilityMode.Continuous) && ( previousRun ||
                 getHostCard().getStaticAbilities().contains(this) ||
                 getHostCard().getHiddenStaticAbilities().contains(this) ||
-                getHostCard().getTypeStaticsLostWithKeywords().contains(this));
+                getHostCard().getCharacteristicStaticsLostWithKeywords().contains(this));
     }
 
     public final Cost getAttackCost(final Card attacker, final GameEntity target, final List<Card> attackersWithOptionalCost) {
