@@ -1046,9 +1046,18 @@ public class ScriptedController extends PlayerControllerAi {
             // Chooser$ and ChangeZoneEffect's Chooser$ ask even when the
             // defined player list has one member, and gorge logs nothing for
             // it. Taking the next gorge pick here would consume the pile card
-            // or the exiled card instead.
-            m.note("entity (" + title + "): lone forced option");
-            return optionList.get(0);
+            // or the exiled card instead. A pick that names exactly this one
+            // option is the exception: ChoosePlayerEffect's lone opponent and
+            // ChooseCardEffect's lone ChooseEach$ candidate are logged by
+            // gorge as one-option picks, and nothing else is the answer to
+            // this ask, so it is consumed rather than left over.
+            T only = optionList.get(0);
+            if (m.takeLonePick(seat, only)) {
+                m.note("entity (" + title + "): lone option, gorge's pick consumed");
+            } else {
+                m.note("entity (" + title + "): lone forced option");
+            }
+            return only;
         }
         List<T> picked = m.pickObjects(seat, optionList, isOptional ? 0 : 1, 1, "entity (" + title + ")");
         if (picked != null) {

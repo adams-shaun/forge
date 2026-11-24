@@ -1775,6 +1775,24 @@ public final class StepMachine {
         return null;
     }
 
+    /** Consumes gorge's one-option pick of the lone forced entity Forge asks
+     * about (ChoosePlayer over the one opponent, a ChooseEach$ category with
+     * one candidate). Only a pick whose single ref IS this entity qualifies:
+     * any other object or player pick belongs to the ask that follows (the
+     * pile card of a lone TwoPiles Chooser$), so it is left alone. */
+    boolean takeLonePick(int seat, GameEntity only) {
+        return take(seat, x -> {
+            if (!DecisionQueue.isObjectChoice(x) || x.refs().size() != 1) {
+                return false;
+            }
+            try {
+                return only.equals(entity(x.refs().get(0)));
+            } catch (HarnessError notFound) {
+                return false;
+            }
+        }) != null;
+    }
+
     /** Forge's "Cancel search?" after each searched card: true while gorge's
      * one pick still has refs to give, false once it is used up; null when no
      * gorge search pick is in flight at this step. */
