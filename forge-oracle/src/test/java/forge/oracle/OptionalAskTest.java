@@ -161,4 +161,50 @@ public class OptionalAskTest {
         assertFalse(r.row.notes.stream().anyMatch(n -> n.startsWith("loose: AI answered unless-pay")),
                 "the later payer is not a loose miss, notes: " + r.row.notes);
     }
+
+    @Test
+    public void emptyTapOrUntapAnswerReadsAsTap() throws Exception {
+        Replay r = replay("toils-tap-or-untap-empty.jsonl");
+
+        // gorge's taporuntap contract: an empty answer reads as "tap" (the
+        // state-changing first option), so both already-tapped Islands stay
+        // tapped and the empty decisions are consumed, not left over.
+        assertEquals(r.row.notes.stream()
+                        .filter(n -> n.equals("binary step 5 (TapOrUntap): tap []")).count(),
+                2, "both empty answers read as tap, notes: " + r.row.notes);
+        JsonObject step5 = checkpoint(r.row, "step 5 (pass)");
+        assertNotNull(step5, "step-5 snapshot");
+        for (JsonElement e : step5.getAsJsonArray("permanents")) {
+            JsonObject p = e.getAsJsonObject();
+            if (p.get("controller").getAsInt() == 0 && "Island".equals(p.get("name").getAsString())) {
+                assertTrue(p.get("tapped").getAsBoolean(), "no Island untapped by an empty answer: " + step5);
+            }
+        }
+    }
+
+    @Test
+    public void strictOptionalSacrificeYesConsumesTheModeAndLeavesThePick() throws Exception {
+        Replay r = replay("strict-sacrifice-yes.jsonl");
+
+        // Optional$ + StrictAmount$: gorge logs a sacrifice_optional mode ask
+        // before the exact pick. The yes is read from it and consumed; the
+        // exact pick still reaches choosePermanentsToSacrifice.
+        assertTrue(r.machine.card("p0:Mountain").isInZone(ZoneType.Graveyard), "the picked Mountain is sacrificed");
+        assertTrue(r.row.notes.stream()
+                        .anyMatch(n -> n.equals("sacrifice-confirm step 4: yes (strict [Sacrifice 1 permanent(s)])")),
+                "the strict confirm answers yes from the mode ask, notes: " + r.row.notes);
+        assertTrue(r.row.notes.stream().anyMatch(n -> n.equals("pick step 4 sacrifice: [p0:Mountain]")),
+                "the exact pick reaches choosePermanentsToSacrifice, notes: " + r.row.notes);
+    }
+
+    @Test
+    public void strictOptionalSacrificeDeclineSacrificesNothing() throws Exception {
+        Replay r = replay("strict-sacrifice-no.jsonl");
+
+        assertEquals(r.machine.seats[0].getCardsIn(ZoneType.Battlefield).size(), 4,
+                "a declined strict sacrifice keeps every Mountain");
+        assertTrue(r.row.notes.stream()
+                        .anyMatch(n -> n.equals("sacrifice-confirm step 4: no (strict [Don't sacrifice])")),
+                "the strict confirm answers no from the mode ask, notes: " + r.row.notes);
+    }
 }

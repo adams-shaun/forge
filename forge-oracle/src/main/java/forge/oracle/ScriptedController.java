@@ -414,6 +414,20 @@ public class ScriptedController extends PlayerControllerAi {
      * exception: Forge sacrifices the host on the yes and never asks again, so
      * the pick is consumed here. */
     private boolean sacrificeConfirm(SpellAbility sa) {
+        // An Optional$ + StrictAmount$ sacrifice ("sacrifice two Foods", Giant
+        // Opportunity) is not a 0..N pick: gorge logs the yes/no itself as a
+        // mode decision (resume "sacrifice_optional": "Sacrifice N
+        // permanent(s)" / "Don't sacrifice", an empty answer declines) before
+        // any exact pick. That decision IS the confirm: consume it and answer
+        // from it; a yes leaves the exact pick queued for
+        // choosePermanentsToSacrifice, a no has none.
+        Decision mode = take(x -> x.resume.equals("sacrifice_optional"));
+        if (mode != null) {
+            boolean yes = !mode.picks.isEmpty()
+                    && !mode.picks.get(0).trim().toLowerCase(java.util.Locale.ROOT).startsWith("don't");
+            m.note("sacrifice-confirm step " + m.step() + ": " + (yes ? "yes" : "no") + " (strict " + mode.picks + ")");
+            return yes;
+        }
         Predicate<Decision> isSacrifice = x -> x.resume.equals("sacrifice");
         boolean self = "Self".equals(sa.getParamOrDefault("SacValid", "Self"));
         if (self) {
@@ -484,7 +498,9 @@ public class ScriptedController extends PlayerControllerAi {
         }
         Decision d = binaryPick(kindOfChoice);
         if (d != null) {
-            boolean tap = d.pickKinds.contains("tap");
+            // An empty answer reads as "tap" (gorge's taporuntap/taporuntapall
+            // contract: the first, state-changing option is the default).
+            boolean tap = d.picks.isEmpty() || d.pickKinds.contains("tap");
             m.note("binary step " + m.step() + " (" + kindOfChoice + "): " + (tap ? "tap" : "untap") + " " + d.picks);
             return tap;
         }
@@ -499,8 +515,12 @@ public class ScriptedController extends PlayerControllerAi {
      * answer. */
     private Decision binaryPick(BinaryChoiceType kind) {
         if (kind == BinaryChoiceType.TapOrUntap) {
+            // By role (resume taporuntap / taporuntapall) so an empty answer,
+            // which has no pick kinds, is found too; the pick kinds remain a
+            // fallback for a decision logged without a resume.
             return take(x -> x.kind.equals("choose_n")
-                    && (x.pickKinds.contains("tap") || x.pickKinds.contains("untap")));
+                    && (x.resume.equals("taporuntap") || x.resume.equals("taporuntapall")
+                            || x.pickKinds.contains("tap") || x.pickKinds.contains("untap")));
         }
         return null;
     }
