@@ -549,14 +549,23 @@ public class ScriptedController extends PlayerControllerAi {
         return picked != null ? new CardCollection(picked) : super.chooseCardsForCost(optionList, sa, cpl, amount, isOptional, prompt);
     }
 
+    /** A gorge pick kind answered by Forge's chooseCardsForConvokeOrImprovise. */
+    static boolean isConvokeLikeKind(String kind) {
+        return kind.startsWith("convoke") || kind.startsWith("improvise") || kind.startsWith("waterbend");
+    }
+
     @Override
     public Map<Card, ManaCostShard> chooseCardsForConvokeOrImprovise(SpellAbility sa, ManaCost manaCost, CardCollectionView untappedCards, boolean artifacts, boolean creatures, Integer maxReduction) {
-        // gorge's convoke/improvise picks (pick kinds convoke_generic,
-        // convoke_<C>, improvise...): each names a creature/artifact and the
-        // pip it pays. With none logged, gorge paid from the pool only.
+        // gorge's convoke/improvise/waterbend picks (pick kinds convoke_generic,
+        // convoke_<C>, improvise_generic, waterbend_generic): each names a
+        // creature/artifact and the pip it pays. With none logged, gorge paid
+        // from the pool only. A waterbend tap (CR 701.67a) is the same ask:
+        // Forge routes Waterbend{N}/{X} through this method too, so a
+        // waterbend_generic pick left unconsumed here leaves Forge to pay the
+        // cost from an empty pool and refuse the activation.
         Map<Card, ManaCostShard> out = new java.util.LinkedHashMap<>();
         while (true) {
-            Decision d = take(x -> !x.pickKinds.isEmpty() && (x.pickKinds.get(0).startsWith("convoke") || x.pickKinds.get(0).startsWith("improvise")));
+            Decision d = take(x -> !x.pickKinds.isEmpty() && isConvokeLikeKind(x.pickKinds.get(0)));
             if (d == null) {
                 break;
             }
