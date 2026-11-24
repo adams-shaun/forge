@@ -1072,6 +1072,17 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public boolean willPutCardOnTop(Card c) {
+        // Clash (CR 701.30a): each clashing player may put the revealed card on
+        // the bottom. gorge asks the revealer once, as a 1-of-2 pick
+        // (resume clash_placement) with option kinds "top" ("Keep it on top")
+        // and "bottom" ("Put it on the bottom"); Forge's true means top. By
+        // role, so the answer is found whatever its label says.
+        Decision d = take(x -> x.kind.equals("choose_n") && x.resume.equals("clash_placement") && x.picks.size() == 1);
+        if (d != null) {
+            boolean top = d.pickKinds.contains("top");
+            m.note("clash step " + m.step() + ": " + (top ? "top" : "bottom") + " " + d.picks);
+            return top;
+        }
         m.miss("top or bottom", String.valueOf(c));
         return super.willPutCardOnTop(c);
     }
