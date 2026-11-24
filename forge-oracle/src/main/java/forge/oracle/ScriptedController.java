@@ -832,9 +832,24 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CardCollectionView chooseCardsToDiscardUnlessType(int min, CardCollectionView hand, String[] unlessTypes, SpellAbility sa) {
+        // The election keeps one unless-type card (Forge's own validity test,
+        // the one PlayerControllerHuman's "cards unless type" selection uses)
+        // or discards min cards. The lower bound of 1 stands for that one typed
+        // card, so it only applies while one is in hand: with none the choice
+        // is exactly min cards, and a hand of min or fewer is forced.
+        Player p = getPlayer();
+        boolean unlessInHand = false;
+        for (Card c : hand) {
+            if (c.isValid(unlessTypes, p, sa.getHostCard(), sa)) {
+                unlessInHand = true;
+                break;
+            }
+        }
         // gorge logs the discard as one pick (one typed card, or min cards).
-        List<Card> picked = m.pickObjects(seat, hand, 1, Math.max(min, 1), "discard unless type");
-        if (picked != null && !picked.isEmpty()) {
+        List<Card> picked = unlessInHand
+                ? m.pickObjects(seat, hand, 1, Math.max(min, 1), "discard unless type")
+                : m.pickObjects(seat, hand, min, min, "discard unless type");
+        if (picked != null && (!picked.isEmpty() || min == 0)) {
             return new CardCollection(picked);
         }
         m.miss("discard unless type", String.valueOf(sa));

@@ -262,8 +262,17 @@ public final class StepMachine {
     }
 
     /** An unscripted question: strict fails the attempt, loose lets the AI
-     * answer and notes it. */
+     * answer and notes it. Once the last step's priority has passed (done),
+     * the compared window is closed: the pass that follows can still resolve a
+     * spell the last step left on the stack, so its asks arrive here with
+     * stepIdx == steps.size() and nothing after them is compared. Those answer
+     * like the loose mode and are said out loud, never a strict miss. */
     void miss(String what, String detail) {
+        if (done) {
+            notes.add("ask after the last step: " + what + " at step " + stepIdx
+                    + (detail.isEmpty() ? "" : " (" + detail + ")"));
+            return;
+        }
         if (strict) {
             throw fail(new StrictMiss(what, stepIdx, detail));
         }
@@ -1604,6 +1613,12 @@ public final class StepMachine {
             }
             note("pick step " + stepIdx + " " + what + ": " + d.refs() + (noop ? " (no-op)" : ""));
             return out;
+        }
+        if (max == 0) {
+            // 0..0 admits only the empty pick (Death Cloud cast with X = 0
+            // offers its permanents for a sacrifice of none): every option is
+            // legal to leave, so the empty answer is forced, not unscripted.
+            return new ArrayList<>();
         }
         if (opts.isEmpty()) {
             return new ArrayList<>();
