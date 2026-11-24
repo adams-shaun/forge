@@ -814,7 +814,46 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CardCollectionView chooseCardsToDelve(int genericAmount, CardCollection grave) {
-        return new CardCollection(); // pool-only payment, as for convoke
+        // CR 702.66a: gorge answers its Delve ask with one choose whose every
+        // pick kind is "exile" and whose refs name graveyard cards. Forge asks
+        // this separately for the generic mana it cannot pay. Each pick must
+        // consume one distinct card: several copies share a name, and Forge's
+        // own grave order is not gorge's, so the ordinal cannot be trusted to
+        // pick the exact copy -- but any copy of that name is the same exile.
+        // No ask means gorge paid from the pool only, as for convoke.
+        Decision d = take(DecisionQueue::isDelvePick);
+        if (d == null) {
+            return new CardCollection();
+        }
+        List<String> refs = d.refs();
+        boolean byRef = !refs.isEmpty();
+        List<String> picks = byRef ? refs : d.picks;
+        int n = Math.min(genericAmount, picks.size());
+        CardCollection remaining = new CardCollection(grave);
+        CardCollection out = new CardCollection();
+        for (int i = 0; i < n; i++) {
+            String pick = picks.get(i);
+            RefTable.Ref r = byRef ? RefTable.parse(pick) : null;
+            String name = r != null ? r.name : pick;
+            Card hit = null;
+            for (Card c : remaining) {
+                int owner = SnapshotWriter.seatOf(m.seats, c.getOwner());
+                if (SnapshotWriter.zoneName(c).equals(name) && (r == null || r.seat == owner)) {
+                    hit = c;
+                    break;
+                }
+            }
+            if (hit == null) {
+                m.miss("delve", pick + " is not in the graveyard");
+                return new CardCollection();
+            }
+            remaining.remove(hit);
+            out.add(hit);
+        }
+        if (!out.isEmpty()) {
+            m.note("delve step " + m.step() + ": " + out.size() + " exiled");
+        }
+        return out;
     }
 
     @Override

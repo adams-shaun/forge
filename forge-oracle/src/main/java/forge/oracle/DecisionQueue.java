@@ -307,6 +307,21 @@ public final class DecisionQueue {
         return d.kind.equals("mode") && (d.pickKinds.isEmpty() || d.pickKinds.contains("mode"));
     }
 
+    /** gorge's Delve ask (CR 702.66a): one choose whose every pick kind is
+     * "exile", each naming a card in the caster's graveyard to exile for a
+     * generic mana. No other gorge ask uses the "exile" pick kind. */
+    public static boolean isDelvePick(Decision d) {
+        if (d.pickKinds.isEmpty()) {
+            return false;
+        }
+        for (String k : d.pickKinds) {
+            if (!k.equals("exile")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** A choose over game objects (cards, permanents) whose picks resolve by
      * ref. A yes/no, payment, gift, X or label pick that merely names its
      * source object is not one. */
