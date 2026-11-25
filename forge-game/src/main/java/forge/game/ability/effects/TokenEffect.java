@@ -179,6 +179,14 @@ public class TokenEffect extends TokenEffectBase {
 
         int amount = AbilityUtils.calculateAmount(host, sa.getParamOrDefault("TokenAmount", "1"), sa);
         if (amount < 1) {
+            // CR 603.7a: "Create X tokens ... sacrifice them at the beginning of the next end step" (Mobilize X with
+            // X = 0, Firecat Blitz, Valduk) creates its delayed triggered ability when the effect resolves, whether
+            // or not a token was made; with no token it triggers and does nothing (CR 603.7c). makeTokenTable is the
+            // only other registration point and this return skips it. A script that says AtEOTNeedsCard$ True
+            // (Myriad, CR 702.116a) is still dropped by registerDelayedTrigger over the empty set.
+            if (sa.hasParam("AtEOT")) {
+                registerDelayedTrigger(sa, sa.getParam("AtEOT"), new java.util.ArrayList<Card>());
+            }
             return;
         }
 
