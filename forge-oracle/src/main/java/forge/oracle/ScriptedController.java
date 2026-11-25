@@ -3,6 +3,7 @@ package forge.oracle;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -85,6 +86,12 @@ import forge.util.collect.FCollectionView;
 public class ScriptedController extends PlayerControllerAi {
     final StepMachine m;
     final int seat;
+    // Forge asks the destination alternative after a hidden-origin search even
+    // when the search found nothing. Track, per resolving SpellAbility, whether
+    // a library-origin card pick was asked and whether it ever offered a card,
+    // so the empty search can be answered as the no-choice it is (CR 609.3)
+    // instead of a yes/no strict miss.
+    private final Map<SpellAbility, Boolean> hiddenSearchFound = new IdentityHashMap<>();
     /** Guards {@link #payFromOwnSources} against a mana ability that itself
      * has a mana cost (no basic land does; a chain would re-enter). */
     private boolean payingOwnSources;
@@ -427,9 +434,13 @@ public class ScriptedController extends PlayerControllerAi {
             }
         }
         if (mode == PlayerActionConfirmMode.ChangeZoneToAltDestination && options != null && options.size() == 2) {
-            // true keeps the first destination (ChangeZoneEffect): gorge's
-            // changezone_alternative pick names it ("top" / "bottom", a zone).
-            Decision d = take(x -> x.resume.equals("changezone_alternative") && x.picks.size() == 1);
+            Boolean searchFound = hiddenSearchFound.remove(sa);
+            // true keeps the first destination (ChangeZoneEffect): gorge's pick
+            // names it ("top" / "bottom" or a zone). Two resume kinds pose it:
+            // changezone_alternative is AlternativeDecider$'s library position
+            // (top/bottom), changezone_dest_alt the ordinary DestinationAlternative$
+            // (Dina's Guidance's Hand/Graveyard).
+            Decision d = take(x -> (x.resume.equals("changezone_alternative") || x.resume.equals("changezone_dest_alt")) && x.picks.size() == 1);
             if (d != null) {
                 // gorge's AlternativeDecider$ ask (engine/effects/zone_change.go)
                 // has two kinds: "primary" is LibraryPosition$ (Forge's first
@@ -447,6 +458,15 @@ public class ScriptedController extends PlayerControllerAi {
                     m.note("alt destination step " + m.step() + ": " + d.picks.get(0));
                     return first;
                 }
+            }
+            // A hidden-origin search may find nothing; with no card there is no
+            // "it" to put anywhere, so gorge poses no destination choice (CR
+            // 609.3). Forge still asks; keep the primary destination, no miss.
+            // A search that did offer a card keeps the strict miss below when
+            // gorge logged no destination answer.
+            if (searchFound != null && !searchFound) {
+                m.note("alt destination step " + m.step() + ": empty search, primary");
+                return true;
             }
         }
         boolean cancelSearch = mode == PlayerActionConfirmMode.ChangeZoneGeneral
@@ -1636,8 +1656,22 @@ public class ScriptedController extends PlayerControllerAi {
         return super.chooseSingleSpellForEffect(spells, sa, title, params);
     }
 
+    /** Remember, per resolving SpellAbility, whether a hidden-origin search
+     * asked for a card and whether any candidate was ever offered. Forge's
+     * ChangeZoneEffect calls this with the already-filtered fetch list, so an
+     * empty list is a search that found nothing (not a missing answer). */
+    private void noteHiddenSearch(SpellAbility sa, List<ZoneType> origin, CardCollection fetchList) {
+        if (sa == null || origin == null || !origin.contains(ZoneType.Library)) {
+            return;
+        }
+        boolean found = fetchList != null && !fetchList.isEmpty();
+        Boolean was = hiddenSearchFound.get(sa);
+        hiddenSearchFound.put(sa, (was != null && was) || found);
+    }
+
     @Override
     public Card chooseSingleCardForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa, CardCollection fetchList, DelayedReveal delayedReveal, String selectPrompt, boolean isOptional, Player decider) {
+        noteHiddenSearch(sa, origin, fetchList);
         if (fetchList.isEmpty()) {
             return null;
         }
@@ -1650,6 +1684,7 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public List<Card> chooseCardsForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa, CardCollection fetchList, int min, int max, DelayedReveal delayedReveal, String selectPrompt, Player decider) {
+        noteHiddenSearch(sa, origin, fetchList);
         List<Card> picked = m.pickObjects(seat, fetchList, min, max, "zone change");
         return picked != null ? picked : super.chooseCardsForZoneChange(destination, origin, sa, fetchList, min, max, delayedReveal, selectPrompt, decider);
     }
