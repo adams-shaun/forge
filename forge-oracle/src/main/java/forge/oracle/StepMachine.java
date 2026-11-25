@@ -1144,7 +1144,8 @@ public final class StepMachine {
      * <li>exact: the line's parsed params equal the SA's map params;</li>
      * <li>basic-land: gorge's synthesized "intrinsic: basic land mana" is
      *     Forge's CardState.getLandManaForColor ability (Secondary$, one
-     *     colour), picked by the step's "Add X" mana pick when several;</li>
+     *     colour), picked by the line's colour suffix ("... mana U") and
+     *     else the step's "Add X" mana pick when several;</li>
      * <li>keyword: a keyword-derived line (Keyword$ K: cycling, equip, ...)
      *     against the SAs Forge derived from keyword K with the same API,
      *     then the same cost;</li>
@@ -1168,6 +1169,18 @@ public final class StepMachine {
                 if (sa.isManaAbility() && "True".equals(sa.getParam("Secondary")) && sa.getParam("Produced") != null
                         && sa.getParam("Produced").length() == 1) {
                     land.add(sa);
+                }
+            }
+            // A land with two basic land types (CR 305.6: Underground Sea,
+            // Commercial District) has two such abilities, and gorge's choice
+            // between them is dropped from the request because the step names
+            // the ability by index: the line then carries the colour
+            // ("intrinsic: basic land mana U").
+            String suffix = line.substring("intrinsic: basic land mana".length()).trim();
+            if (land.size() > 1 && suffix.length() == 1) {
+                byte want = manaColor("Add " + suffix);
+                if (want != 0) {
+                    land.removeIf(sa -> forge.card.MagicColor.fromName(sa.getParam("Produced")) != want);
                 }
             }
             if (land.size() > 1) {
