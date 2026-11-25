@@ -170,6 +170,50 @@ public final class RefTable {
         throw new HarnessError("ref " + quote(ref) + " names no object");
     }
 
+    /** The ref gorge's snapshot gives object {@code o} (oracle_snapshot.go
+     * objRef): the smallest setup-bound ref that follows it, else positional --
+     * "pN:Name" by its owner (a token: "pN:token:Name" by its controller), the
+     * k-th live object of that name in creation order, "#k" from the second.
+     * {@code name} is the object's name where it is now. When a setup ref of
+     * that spelling is bound to another object, the first of a name is spelled
+     * "#1" (which resolves positionally) so it does not resolve to the other. */
+    public String refOf(Obj o, String name, List<Obj> live) {
+        String best = null;
+        for (Map.Entry<String, Integer> e : bound.entrySet()) {
+            if (e.getValue() == o.id && (best == null || e.getKey().compareTo(best) < 0)) {
+                best = e.getKey();
+            }
+        }
+        if (best != null) {
+            return best;
+        }
+        int seat = o.token ? o.controller : o.owner;
+        String lower = name.toLowerCase(Locale.ROOT);
+        List<Obj> objs = new ArrayList<>(live);
+        objs.sort((a, b) -> Integer.compare(a.id, b.id));
+        int k = 0;
+        for (Obj c : objs) {
+            if (o.token) {
+                if (!c.token || c.controller != seat || !c.onBattlefield || !anyContains(c.names, lower)) {
+                    continue;
+                }
+            } else if (c.owner != seat || !c.names.contains(name)) {
+                continue;
+            }
+            k++;
+            if (c.id == o.id) {
+                break;
+            }
+        }
+        String base = "p" + seat + ":" + (o.token ? "token:" : "") + name;
+        String ref = k > 1 ? base + "#" + k : base;
+        Integer shadow = bound.get(ref);
+        if (shadow != null && shadow != o.id && k <= 1) {
+            ref = base + "#1";
+        }
+        return ref;
+    }
+
     private static boolean anyContains(List<String> names, String lowerSub) {
         for (String n : names) {
             if (n.toLowerCase(Locale.ROOT).contains(lowerSub)) {

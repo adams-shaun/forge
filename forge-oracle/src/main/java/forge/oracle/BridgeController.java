@@ -874,6 +874,14 @@ public final class BridgeController extends PlayerControllerAi {
     /** {@link #offer()} for any seat: the {@link RecordingController} lists
      * the same options. Anything in {@code unavailable} is left out. */
     static List<SpellAbility> offer(Game game, Player player, List<SpellAbility> unavailable) {
+        return offer(game, player, unavailable, false);
+    }
+
+    /** The same listing; with {@code withMana} the playable mana abilities are
+     * kept too (the checkpoint snapshot's "offered", where a mana ability is an
+     * activation as in gorge and XMage, CR 605.3a), otherwise they are left to
+     * Forge's payment as before. */
+    static List<SpellAbility> offer(Game game, Player player, List<SpellAbility> unavailable, boolean withMana) {
         List<SpellAbility> base = new ArrayList<>();
         for (Card c : offerCards(game, player)) {
             base.addAll(c.getAllPossibleAbilities(player, false));
@@ -891,6 +899,10 @@ public final class BridgeController extends PlayerControllerAi {
         List<SpellAbility> out = new ArrayList<>();
         for (SpellAbility sa : base) {
             if (sa.isManaAbility()) {
+                if (withMana) {
+                    sa.setActivatingPlayer(player);
+                    addOnce(out, sa);
+                }
                 continue; // Forge pays; a mana ability is never a choice here
             }
             sa.setActivatingPlayer(player);

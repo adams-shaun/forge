@@ -34,8 +34,11 @@ import forge.game.zone.ZoneType;
 /**
  * The checkpoint snapshot: exactly the field set the XMage driver's
  * ScenarioReplay.snapshot emits (ScenarioReplay.java:2269-2381), with no
- * "offered" and no "decisions", so gorge's oraclediff.CompareOpts reads Forge
- * rows unchanged on either side (DESIGN 6.7). Forge's values are normalized
+ * "decisions", so gorge's oraclediff.CompareOpts reads Forge rows unchanged on
+ * either side (DESIGN 6.7). "offered" is written only when the item compares
+ * it (compare: ["offered"]), as the XMage driver does: what the priority
+ * holder may play, built from the listing the bridge answers priority from
+ * ({@link #offered}). Forge's values are normalized
  * to gorge's vocabulary here: step names (main1, combat-damage, ...), WUBRG
  * colour letters, WUBRGC pool letters, counter kinds as gorge spells them
  * (P1P1, LOYALTY, CHARGE), the stack top first, a face-down permanent's name
@@ -147,6 +150,11 @@ public final class SnapshotWriter {
     // ---- the snapshot ------------------------------------------------------
 
     public static JsonObject snapshot(String checkpoint, Game game, Player[] seats) {
+        return snapshot(checkpoint, game, seats, null);
+    }
+
+    /** The snapshot, with an "offered" array when {@code offered} is not null. */
+    public static JsonObject snapshot(String checkpoint, Game game, Player[] seats, JsonArray offered) {
         PhaseHandler ph = game.getPhaseHandler();
         JsonObject s = new JsonObject();
         s.addProperty("checkpoint", checkpoint);
@@ -178,7 +186,61 @@ public final class SnapshotWriter {
             stack.add(o);
         }
         s.add("stack", stack);
+        if (offered != null) {
+            s.add("offered", offered);
+        }
         return s;
+    }
+
+    /** What the player holding priority may play, in gorge's snapshot
+     * vocabulary (rules.OracleSnapOffered) and the XMage driver's shape: the
+     * source's scenario ref ({@code refOf}), the kind ("cast" for a spell,
+     * "play" for a land, otherwise "activate" -- mana abilities included, CR
+     * 605.3a), and the ability's rule text. The listing is
+     * {@link BridgeController#offer}, the one the bridge answers priority from
+     * (playable and payable now), plus the mana abilities. Nobody holding
+     * priority (the game ended, or a checkpoint outside a priority window)
+     * offers nothing. */
+    public static JsonArray offered(Game game, Player[] seats, java.util.function.Function<Card, String> refOf) {
+        JsonArray out = new JsonArray();
+        Player holder = game.getPhaseHandler().getPriorityPlayer();
+        if (holder == null || game.isGameOver()) {
+            return out;
+        }
+        for (forge.game.spellability.SpellAbility sa : BridgeController.offer(game, holder, new ArrayList<>(), true)) {
+            Card host = sa.getHostCard();
+            if (host == null) {
+                continue;
+            }
+            JsonObject o = new JsonObject();
+            o.addProperty("source", refOf.apply(host));
+            o.addProperty("kind", offeredKind(sa));
+            o.addProperty("label", offeredLabel(sa));
+            out.add(o);
+        }
+        return out;
+    }
+
+    static String offeredKind(forge.game.spellability.SpellAbility sa) {
+        if (sa.isLandAbility()) {
+            return "play";
+        }
+        return sa.isSpell() ? "cast" : "activate";
+    }
+
+    /** The label XMage's Ability.toString gives: "Cast Name" for a spell, "Play
+     * Name" for a land, else the ability's own text, cost first ("{T}: Add
+     * {G}."); the comparer strips the display prefixes. */
+    static String offeredLabel(forge.game.spellability.SpellAbility sa) {
+        Card host = sa.getHostCard();
+        String name = host == null ? "?" : host.getName();
+        if (sa.isLandAbility()) {
+            return "Play " + name;
+        }
+        if (sa.isSpell()) {
+            return "Cast " + name;
+        }
+        return sa.getDescription();
     }
 
     static int seatOf(Player[] seats, Player p) {

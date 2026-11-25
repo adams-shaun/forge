@@ -79,6 +79,21 @@ public final class Request {
         return new Request(e.getAsJsonObject());
     }
 
+    /** Whether the item opts the "offered" field into the comparison
+     * (compare: ["offered"]); only then do the snapshots carry it. */
+    public boolean comparesOffered() {
+        JsonElement e = item == null ? null : item.get("compare");
+        if (e == null || !e.isJsonArray()) {
+            return false;
+        }
+        for (JsonElement c : e.getAsJsonArray()) {
+            if (c.isJsonPrimitive() && "offered".equals(c.getAsString())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The scenario's steps: a missing key, JSON null or non-array is empty
      * (ScenarioReplay.steps in the XMage driver). */
     public JsonArray steps() {

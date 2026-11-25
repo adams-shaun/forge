@@ -406,7 +406,7 @@ public final class StepMachine {
             // gorge's xmageFixture setup stops at the FIRST main-1 priority of
             // the scenario turn, even with a non-empty stack (oracle_run.go:622-647).
             if (ph.getTurn() == targetTurn && ph.is(PhaseType.MAIN1) && p == ph.getPlayerTurn()) {
-                snaps.add(SnapshotWriter.snapshot("setup", game, seats));
+                snaps.add(snapshot("setup"));
                 stepIdx = 0;
                 acted = false;
             } else {
@@ -664,8 +664,28 @@ public final class StepMachine {
         note("attach step " + stepIdx + ": " + Request.str(st, "card") + " -> " + Request.str(st, "attached_to"));
     }
 
+    /** A checkpoint snapshot; the item's compare: ["offered"] adds what the
+     * priority holder may play, each source named by its scenario ref. */
+    private JsonObject snapshot(String checkpoint) {
+        if (!req.comparesOffered()) {
+            return SnapshotWriter.snapshot(checkpoint, game, seats);
+        }
+        List<RefTable.Obj> live = liveObjects();
+        return SnapshotWriter.snapshot(checkpoint, game, seats, SnapshotWriter.offered(game, seats, c -> {
+            RefTable.Obj o = null;
+            for (RefTable.Obj l : live) {
+                if (l.id == c.getId()) {
+                    o = l;
+                    break;
+                }
+            }
+            String name = c.isInZone(ZoneType.Battlefield) && !c.isFaceDown() ? c.getName() : SnapshotWriter.zoneName(c);
+            return o == null ? "p" + SnapshotWriter.seatOf(seats, c.getOwner()) + ":" + name : refs.refOf(o, name, live);
+        }));
+    }
+
     private void complete(String op) {
-        snaps.add(SnapshotWriter.snapshot("step " + stepIdx + " (" + op + ")", game, seats));
+        snaps.add(snapshot("step " + stepIdx + " (" + op + ")"));
         stepIdx++;
         acted = false;
         actedSa = null;
