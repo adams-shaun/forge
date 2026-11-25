@@ -2003,6 +2003,11 @@ public final class StepMachine {
                     + (empty != null ? "consumed gorge's empty pick" : "no gorge pick to consume"));
             return new ArrayList<>();
         }
+        // Forge's InputSelectEntitiesFromList clamps both bounds to the number of
+        // options, and a player told to choose two among one chooses the one (CR
+        // 609.3: do as much as possible), so gorge records the pick it can make.
+        // The strict check below is against that effective minimum.
+        min = Math.min(min, opts.size());
         if (carryStep == stepIdx && carrySeat == seat && (!carryRefs.isEmpty() || carryOpen)) {
             // The rest of one gorge pick that Forge asks for one card at a time
             // (a search "up to two" is one gorge decision, two Forge asks).
@@ -2107,6 +2112,7 @@ public final class StepMachine {
     /** Maps an already-taken gorge decision's refs onto Forge's options (by
      * ref, else a same-named copy for an unbound ref); null after a miss. */
     <T extends GameEntity> List<T> pickFrom(Decision d, List<T> opts, int min, int max, String what) {
+        min = Math.min(min, opts.size()); // as pickObjects: Forge's input clamps min to the options
         List<T> out = new ArrayList<>();
         Set<T> used = new HashSet<>();
         for (String ref : d.refs()) {
