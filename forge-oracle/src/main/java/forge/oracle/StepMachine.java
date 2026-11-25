@@ -845,6 +845,20 @@ public final class StepMachine {
             if (fromCommand != null) {
                 return fromCommand;
             }
+        } else if (!c.isInZone(ZoneType.Hand)) {
+            // A cast from any other zone (Hurl Through Hell's exiled card, a
+            // graveyard or library permission) is the copy a MayPlay static
+            // grants: the card's own spell is restricted to the hand (CR
+            // 601.2a; SpellAbilityRestriction.checkZoneRestrictions). A card
+            // Forge grants no such cast for cannot be cast from this zone;
+            // fail loudly here rather than hand the caller a spell the zone
+            // restriction is certain to refuse.
+            SpellAbility fromElsewhere = mayPlaySpell(c, p);
+            if (fromElsewhere != null) {
+                return fromElsewhere;
+            }
+            throw new HarnessError(Request.str(st, "card") + " is in " + c.getZone().getZoneType()
+                    + " and Forge offers no may-play cast");
         }
         List<SpellAbility> spells = new ArrayList<>(c.getSpells());
         if (spells.isEmpty()) {
@@ -865,6 +879,21 @@ public final class StepMachine {
      * card cannot be cast now), so the caller falls back to the plain spell
      * and the step fails as Forge refuses it. */
     private SpellAbility commandZoneSpell(Card c, Player p) {
+        return mayPlaySpell(c, p, "the command zone");
+    }
+
+    /** The cast a MayPlay static grants c from outside the hand: Forge copies
+     * the card's spell with the zone restriction lifted (GameActionUtil's
+     * getMayPlaySpellOptions; getMayPlay is the granting static). Prefer a
+     * basic copy, as commandZoneSpell does, so a plain permission (Hurl
+     * Through Hell's exiled card) beats a cost-replacing copy; the first
+     * non-basic copy is the fallback for a "without paying its mana cost"
+     * grant. null when Forge grants no such cast. */
+    private SpellAbility mayPlaySpell(Card c, Player p) {
+        return mayPlaySpell(c, p, c.getZone() == null ? "no zone" : c.getZone().getZoneType().toString());
+    }
+
+    private SpellAbility mayPlaySpell(Card c, Player p, String zone) {
         game.getAction().checkStaticAbilities();
         SpellAbility alt = null;
         for (SpellAbility sa : c.getAllPossibleAbilities(p, false)) {
@@ -872,7 +901,7 @@ public final class StepMachine {
                 continue;
             }
             if (sa.isBasicSpell() && sa.getCardStateName() != forge.card.CardStateName.Backside) {
-                note("cast: from the command zone by " + sa.getMayPlay().getHostCard());
+                note("cast: from " + zone + " by " + sa.getMayPlay().getHostCard());
                 return sa;
             }
             if (alt == null) {
@@ -880,7 +909,7 @@ public final class StepMachine {
             }
         }
         if (alt != null) {
-            note("cast: from the command zone, no basic spell; took " + alt);
+            note("cast: from " + zone + ", no basic spell; took " + alt);
         }
         return alt;
     }
@@ -889,8 +918,9 @@ public final class StepMachine {
      * is the ordinary cast or an optional cost (kicker, offspring, ... are
      * paid through chooseOptionalCosts and modeKeywordCost). Forge lists the
      * alternatives among Card.getAllPossibleAbilities: an Adventure or Omen
-     * half, a modal back face, a warp cast, and the plot special action. A
-     * named mode Forge cannot offer is a harness row, not a different cast. */
+     * half, a modal back face, a warp cast, a static AlternativeCost copy, a
+     * MayPlay permission's copy, and the plot special action. A named mode
+     * Forge cannot offer is a harness row, not a different cast. */
     private SpellAbility spellForMode(Card c, Player p, String mode) {
         if (mode.isEmpty()) {
             return null;
@@ -911,12 +941,35 @@ public final class StepMachine {
             }
             throw new HarnessError("cast_mode suspend: " + c.getName() + " has no suspend ability");
         }
+        if (mode.equals("mayplay")) {
+            // A cast through a "you may cast that card" permission (Hurl
+            // Through Hell's exiled card, a graveyard or library permission):
+            // the card's own spell is restricted to the hand, so the cast is
+            // the MayPlay-bound copy Forge offers. Explicitly asked for, so a
+            // card in the hand must still take the permission's copy; none is
+            // a harness row, not a different cast.
+            SpellAbility granted = mayPlaySpell(c, p);
+            if (granted == null) {
+                throw new HarnessError("cast_mode mayplay: " + c.getName() + " offers no may-play cast in Forge");
+            }
+            return granted;
+        }
         java.util.function.Predicate<SpellAbility> want;
         switch (mode) {
             case "adventure_alt": want = sa -> sa.isSpell() && sa.isAdventure(); break;
             case "omen_alt": want = sa -> sa.isSpell() && sa.isOmen(); break;
             case "modal_spell": want = sa -> sa.isSpell() && sa.getCardStateName() == forge.card.CardStateName.Backside; break;
             case "warped": want = sa -> sa.isSpell() && sa.isWarp(); break;
+            // StaticAbilityAlternativeCost copies a spell with the static's
+            // Cost in place of the printed mana cost (Submerge's "cast
+            // without paying its mana cost", Leyline of Mutation's alternative
+            // cost) and leaves AlternativeCost unset: that field is only for
+            // the keyword alternatives (Warp, Escape, ...). A may-play
+            // alternative that replaces the cost (Warped Space) is copied the
+            // same way and Forge marks it optional/non-basic too. The plain
+            // cast stays basic, so the first non-basic spell with no keyword
+            // alternative is the option gorge's cast_mode "alternative" names.
+            case "alternative": want = sa -> sa.isSpell() && sa.getAlternativeCost() == null && !sa.isBasicSpell(); break;
             default: return null;
         }
         // From the command zone only the Commander Effect's may-play copy can
@@ -1792,6 +1845,10 @@ public final class StepMachine {
                 return null;
             }
             note("pick step " + stepIdx + " " + what + ": " + d.refs() + (noop ? " (no-op)" : ""));
+            if (d.resume.equals("dig") && !noop && carryRefs.isEmpty() && d.picks.size() == out.size()) {
+                digPickStep = stepIdx;
+                digPickNames = new ArrayList<>(d.picks);
+            }
             return out;
         }
         if (max == 0) {
@@ -1838,6 +1895,11 @@ public final class StepMachine {
         }
         return more;
     }
+
+    // The last gorge "dig" pick this step consumed: the names of the cards that
+    // went to the library position, in pick order (see orderCards).
+    private int digPickStep = -99;
+    private List<String> digPickNames;
 
     private int carryStep = -99;
     private int carrySeat = -1;
@@ -1887,6 +1949,17 @@ public final class StepMachine {
      * order unobservable, but Forge still asks, so the matching decision is
      * consumed rather than left over. */
     List<Card> orderCards(int seat, Collection<Card> cards, String what) {
+        return orderCards(seat, cards, what, false);
+    }
+
+    /** As {@link #orderCards(int, Collection, String)}; digPickedToBottom says
+     * the cards are the ones a Dig's selection sent to the library BOTTOM
+     * (Spin into Myth's fateseal: DigNum$ 2, ChangeNum$ Any, LibraryPosition$
+     * -1). gorge logs no order decision for them: its one choose_n "dig" pick
+     * is the move order, first pick moved first, so each successive bottom
+     * placement leaves the first pick topmost of the pile. When no order
+     * decision exists, Forge's own order ask is answered from that pick. */
+    List<Card> orderCards(int seat, Collection<Card> cards, String what, boolean digPickedToBottom) {
         Set<String> names = new HashSet<>();
         for (Card c : cards) {
             names.add(c.getName());
@@ -1910,7 +1983,38 @@ public final class StepMachine {
         Decision d = what.contains("Graveyard")
                 ? take(seat, DecisionQueue::isGraveyardOrder)
                 : take(seat, DecisionQueue::isCardOrder);
+        if (d == null && digPickedToBottom && !what.contains("Graveyard")) {
+            List<String> picks = takeDigPick(cards, Card::getName);
+            if (picks != null) {
+                return orderByNames(cards, picks, what + " (gorge's dig pick is the order)", Card::getName);
+            }
+        }
         return orderCardsByPicks(cards, d, what, Card::getName);
+    }
+
+    /** The names of the gorge dig pick consumed at this step, when they are
+     * exactly the offered cards' names (as a multiset), else null. The seat is
+     * not compared: Forge asks the cards' OWNER's controller to order a pile
+     * (GameActionUtil.orderCardsByTheirOwners), while gorge's pick is the
+     * chooser's, and fateseal's cards are the opponent's. A pick is the order of
+     * one move only, so it is used up here. */
+    <T> List<String> takeDigPick(Collection<T> cards, Function<T, String> nameOf) {
+        if (digPickNames == null || digPickStep != stepIdx) {
+            return null;
+        }
+        List<String> want = new ArrayList<>();
+        for (T c : cards) {
+            want.add(nameOf.apply(c));
+        }
+        List<String> have = new ArrayList<>(digPickNames);
+        java.util.Collections.sort(want);
+        java.util.Collections.sort(have);
+        if (!want.equals(have)) {
+            return null;
+        }
+        List<String> picks = digPickNames;
+        digPickNames = null;
+        return picks;
     }
 
     /** The queue-independent half of {@link #orderCards}: the picked names in
@@ -1924,9 +2028,13 @@ public final class StepMachine {
             miss("order", what);
             return null;
         }
+        return orderByNames(cards, d.picks, what, nameOf);
+    }
+
+    private <T> List<T> orderByNames(Collection<T> cards, List<String> picks, String what, Function<T, String> nameOf) {
         List<T> left = new ArrayList<>(cards);
         List<T> ordered = new ArrayList<>();
-        for (String pick : d.picks) {
+        for (String pick : picks) {
             for (int i = 0; i < left.size(); i++) {
                 if (pick.equals(nameOf.apply(left.get(i)))) {
                     ordered.add(left.remove(i));
@@ -1935,10 +2043,10 @@ public final class StepMachine {
             }
         }
         if (!left.isEmpty()) {
-            miss("order", what + ": gorge order " + d.picks + " does not name every card");
+            miss("order", what + ": gorge order " + picks + " does not name every card");
             return null;
         }
-        note("order step " + stepIdx + ": " + what + " " + d.picks);
+        note("order step " + stepIdx + ": " + what + " " + picks);
         return ordered;
     }
 
