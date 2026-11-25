@@ -1645,6 +1645,14 @@ public class ScriptedController extends PlayerControllerAi {
                 if (plain != null) {
                     return plain;
                 }
+                if (min == max) {
+                    // One counter kind and the card's fixed CounterNum$ leave
+                    // no choice, so gorge logs no counter pick (CR 122.1) and
+                    // the forced amount is answered without an ask. Keep the
+                    // miss for a free min < max range with no pick.
+                    m.note("number step " + m.step() + ": " + min + " (forced: no counter pick)");
+                    return min;
+                }
                 if (min == 0) {
                     // RemoveCounter's "remove up to N": no counter-kind pick
                     // means the controller removed none.

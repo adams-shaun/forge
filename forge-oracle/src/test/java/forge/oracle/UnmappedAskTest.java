@@ -118,6 +118,22 @@ public class UnmappedAskTest {
         assertEquals(ajani.getCounters(CounterEnumType.P1P1), 1, "the +1/+1 is untouched");
     }
 
+    /** Ferropede's combat-damage trigger removes "a counter" of any type from
+     * Wall of Stone, which has one +1/+1 counter: with one kind and the card's
+     * fixed CounterNum$ 1 the removal is forced, so gorge logs no counter-kind
+     * pick (CR 122.1). Forge's removeAnyType asks chooseCounterType (the lone
+     * option is forced) then chooseNumber(1, 1); a forced amount must be
+     * answered without a pick, not strict-missed. */
+    @Test
+    public void removeAnyTypeForcedAmountRemovesTheLoneCounter() throws Exception {
+        StepMachine m = replay("counter-remove-forced-amount.jsonl");
+        assertTrue(m.notes.stream().anyMatch(n -> n.contains("forced: no counter pick")),
+                "a forced amount is answered without a counter pick, notes: " + m.notes);
+        Card wall = (Card) m.entity("p1:Wall of Stone");
+        assertEquals(wall.getCounters(CounterEnumType.P1P1), 0,
+                "the lone +1/+1 counter is removed");
+    }
+
     @Test
     public void blightCostPicksTheLoneCreature() throws Exception {
         StepMachine m = replay("blight-cost.jsonl");
