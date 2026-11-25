@@ -1890,6 +1890,28 @@ public final class StepMachine {
         return null;
     }
 
+    /** Maps an already-taken gorge decision's refs onto Forge's options (by
+     * ref, else a same-named copy for an unbound ref); null after a miss. */
+    <T extends GameEntity> List<T> pickFrom(Decision d, List<T> opts, int min, int max, String what) {
+        List<T> out = new ArrayList<>();
+        Set<T> used = new HashSet<>();
+        for (String ref : d.refs()) {
+            T o = matchRef(ref, opts, used);
+            if (o == null) {
+                miss(what, "gorge pick " + ref + " is not among Forge's " + opts.size() + " options");
+                return null;
+            }
+            used.add(o);
+            out.add(o);
+        }
+        if (out.size() < min || out.size() > max) {
+            miss(what, "gorge picked " + out.size() + ", Forge wants " + min + ".." + max);
+            return null;
+        }
+        note("pick step " + stepIdx + " " + what + ": " + d.refs());
+        return out;
+    }
+
     /** Consumes gorge's one-option pick of the lone forced entity Forge asks
      * about (ChoosePlayer over the one opponent, a ChooseEach$ category with
      * one candidate). Only a pick whose single ref IS this entity qualifies:
