@@ -1171,6 +1171,16 @@ public final class StepMachine {
                 }
             }
             if (land.size() > 1) {
+                // A land with several basic land types has one such ability per type (CR 305.6). The exporter
+                // names the ability's colour on the line ("intrinsic: basic land mana R") because it drops
+                // gorge's wheel decision for a step that names the ability by index; a bare line (a lone
+                // basic type, or an old request) narrows by the wheel pick below as before.
+                String suffix = line.substring("intrinsic: basic land mana".length()).trim();
+                if (!suffix.isEmpty()) {
+                    land.removeIf(sa -> !suffix.equals(sa.getParam("Produced")));
+                }
+            }
+            if (land.size() > 1) {
                 Decision pick = dq.peek(stepIdx, x -> x.pickKinds.contains("mana") && x.picks.size() == 1);
                 if (pick != null) {
                     byte col = manaColor(pick.picks.get(0));
