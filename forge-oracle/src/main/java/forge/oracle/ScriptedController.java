@@ -995,6 +995,17 @@ public class ScriptedController extends PlayerControllerAi {
             m.note("unless-pay step " + m.step() + ": p" + seat + " declines (an earlier payer paid)");
             return false;
         }
+        // CR 118.3: a player cannot pay a cost without the resources to pay
+        // it in full, so an unaffordable optional cost has one legal answer:
+        // decline it. gorge's GenericChoiceAvailable drops an unless choice
+        // whose UnlessCost$ the payer cannot afford (mana included), so it
+        // logs no answer; Forge's ChooseGenericEffect can still offer one
+        // (Cost.canPay does not check mana) and ask here. Declining is not a
+        // miss. Keep the miss for an affordable cost gorge left unanswered.
+        if (!forge.ai.ComputerUtilCost.canPayCost(cost, sa, player, true)) {
+            m.note("unless-pay step " + m.step() + ": unaffordable, declined " + cost.toSimpleString());
+            return false;
+        }
         m.miss("unless-pay", cost.toSimpleString() + " for " + sa);
         return super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers);
     }
