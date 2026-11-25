@@ -66,6 +66,77 @@ public class OrderCardsTest {
         assertNull(m.take(0, DecisionQueue::isGraveyardOrder), "the pin is consumed once");
     }
 
+    /** A card that enters and leaves the graveyard within one resolution (the
+     * Sorin, Lord of Innistrad -6: Destroy, then ChangeZoneAll back to the
+     * battlefield) is in neither checkpoint, so no pin can be derived for its
+     * CR 404.3 order. orderCards keeps Forge's offered order instead of
+     * strict-missing a question gorge has no recorded answer for. */
+    @Test
+    public void unpinnedGraveyardOrderKeepsForgeOrder() {
+        StepMachine m = machine("[]");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Forest", "Island"}) {
+            cards.add(card(m, name));
+        }
+        List<Card> got = m.orderCards(0, cards, "order to Graveyard");
+        assertEquals(got, cards, "Forge's offered order is kept");
+        assertTrue(m.notes.toString().contains(
+                "order to Graveyard (no order pin: keeping Forge's order)"), m.notes.toString());
+        assertFalse(m.notes.toString().contains("loose"), m.notes.toString());
+    }
+
+    /** The return half of the same resolution asks "order to Battlefield", a
+     * zone for which gorge records no order at all; it keeps Forge's order
+     * rather than reporting a second unanswerable ask. */
+    @Test
+    public void unpinnedBattlefieldOrderKeepsForgeOrder() {
+        StepMachine m = machine("[]");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Forest", "Island"}) {
+            cards.add(card(m, name));
+        }
+        List<Card> got = m.orderCards(0, cards, "order to Battlefield");
+        assertEquals(got, cards, "Forge's offered order is kept");
+        assertTrue(m.notes.toString().contains(
+                "order to Battlefield (no order pin: keeping Forge's order)"), m.notes.toString());
+        assertFalse(m.notes.toString().contains("loose"), m.notes.toString());
+    }
+
+    /** Every other destination still strict-misses when no decision is
+     * queued: the fallback is deliberately limited to the graveyard and
+     * battlefield asks above, so a future zone with an order truth cannot
+     * silently keep Forge's order instead of reporting it. */
+    @Test
+    public void unpinnedOtherZoneStillLooseMisses() {
+        StepMachine m = machine("[]");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Forest", "Island"}) {
+            cards.add(card(m, name));
+        }
+        assertNull(m.orderCards(0, cards, "order to Exile"), "no fallback for Exile");
+        assertTrue(m.notes.toString().contains("loose: AI answered order"), m.notes.toString());
+    }
+
+    /** A pin a checkpoint can see is still applied: the fallback only covers an
+     * ask with no decision queued, so a real ordering difference is caught. */
+    @Test
+    public void pinnedGraveyardOrderStillApplies() {
+        StepMachine m = machine("[{\"step\":0,\"seat\":0,\"kind\":\"order\","
+                + "\"gorge_kind\":\"graveyard_order\",\"picks\":[\"Island\",\"Forest\"]}]");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Forest", "Island"}) {
+            cards.add(card(m, name));
+        }
+        List<Card> got = m.orderCards(0, cards, "order to Graveyard");
+        assertEquals(got.stream().map(Card::getName).toList(),
+                List.of("Island", "Forest"));
+        assertNull(m.take(0, DecisionQueue::isGraveyardOrder), "the pin is consumed once");
+    }
+
     @Test
     public void duplicateNamesTakeTheFirstUnusedCopy() {
         StepMachine m = machine("[{\"step\":0,\"seat\":0,\"kind\":\"order\",\"gorge_kind\":\"graveyard_order\","
