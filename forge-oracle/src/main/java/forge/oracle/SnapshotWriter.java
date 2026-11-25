@@ -204,7 +204,7 @@ public final class SnapshotWriter {
     public static JsonArray offered(Game game, Player[] seats, java.util.function.Function<Card, String> refOf) {
         JsonArray out = new JsonArray();
         Player holder = game.getPhaseHandler().getPriorityPlayer();
-        if (holder == null || game.isGameOver()) {
+        if (holder == null || game.isGameOver() || declarationPending(game, seats)) {
             return out;
         }
         for (forge.game.spellability.SpellAbility sa : BridgeController.offer(game, holder, new ArrayList<>(), true)) {
@@ -219,6 +219,58 @@ public final class SnapshotWriter {
             out.add(o);
         }
         return out;
+    }
+
+    /** Whether the checkpoint stands where gorge stops on a pending
+     * declaration instead of a priority: the declare-attackers or
+     * declare-blockers step before anyone has declared, with at least one
+     * legal attacker or blocker. The turn-based declaration comes before any
+     * priority (CR 508.1, 509.1, 117.3a), so gorge's checkpoint there offers
+     * nothing, though Forge hands the seat priority once its callback returns
+     * without a declaration. With no legal option gorge records the forced
+     * empty declaration inside the step transition and its checkpoint is the
+     * live priority that follows, which does offer the holder's options; a
+     * declaration already made (an attack or block step) is evidence of an
+     * option and leaves the priority that follows it a priority. */
+    static boolean declarationPending(Game game, Player[] seats) {
+        PhaseHandler ph = game.getPhaseHandler();
+        PhaseType phase = ph.getPhase();
+        Player active = ph.getPlayerTurn();
+        Combat combat = game.getCombat();
+        if (phase == PhaseType.COMBAT_DECLARE_ATTACKERS) {
+            if (combat != null && !combat.getAttackers().isEmpty()) {
+                return false;
+            }
+            for (Player defender : seats) {
+                if (defender == active || !defender.isInGame()) {
+                    continue;
+                }
+                for (Card c : active.getCreaturesInPlay()) {
+                    if (forge.game.combat.CombatUtil.canAttack(c, defender)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        if (phase == PhaseType.COMBAT_DECLARE_BLOCKERS) {
+            if (combat == null || combat.getAttackers().isEmpty() || !combat.getAllBlockers().isEmpty()) {
+                return false;
+            }
+            for (Player defender : seats) {
+                if (defender == active || !defender.isInGame()) {
+                    continue;
+                }
+                for (Card blocker : defender.getCreaturesInPlay()) {
+                    for (Card attacker : combat.getAttackers()) {
+                        if (forge.game.combat.CombatUtil.canBlock(attacker, blocker, combat)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     static String offeredKind(forge.game.spellability.SpellAbility sa) {
