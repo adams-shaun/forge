@@ -1839,6 +1839,14 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public String chooseCardName(SpellAbility sa, List<ICardFace> faces, String message) {
+        if (faces.isEmpty()) {
+            // ChooseCardNameEffect (ChooseFromDefinedCards$ Remembered, Alhammarret, High Arbiter) still asks
+            // when the opponent revealed no nonland card: there is no name to choose and gorge logs no decision.
+            // "" is what ChooseCardNameAi returns for it, and the effect then names nothing
+            // (`if (!chosen.isEmpty())` guards addNamedCard/setNamedCard).
+            m.note("card name step " + m.step() + ": no face to name, none chosen (gorge logged none)");
+            return "";
+        }
         if (faces.size() == 1) {
             return faces.get(0).getName();
         }
