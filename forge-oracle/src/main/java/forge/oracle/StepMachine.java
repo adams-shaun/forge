@@ -788,6 +788,16 @@ public final class StepMachine {
                     + sc.getCounters(CounterEnumType.TIME) + " time counters");
             return;
         }
+        if (actedSa.isForetelling()) {
+            // Foretell is a special action (CR 702.143a, 116.2h): it uses no stack, the card
+            // is exiled face down and foretold.
+            Card fc = game.findById(actedHostId);
+            if (fc == null || !fc.isInZone(ZoneType.Exile) || !fc.isForetold()) {
+                throw new HarnessError("step " + stepIdx + " (foretell) " + Request.str(st, "card") + " was not foretold");
+            }
+            note("foretell step " + stepIdx + ": " + Request.str(st, "card") + " exiled face down, foretold");
+            return;
+        }
         boolean wantSpell = op.equals("cast");
         for (SpellAbilityStackInstance si : game.getStack()) {
             Card src = si.getSourceCard();
@@ -930,8 +940,9 @@ public final class StepMachine {
      * paid through chooseOptionalCosts and modeKeywordCost). Forge lists the
      * alternatives among Card.getAllPossibleAbilities: an Adventure or Omen
      * half, a modal back face, a warp or evoke cast, a static AlternativeCost
-     * copy, a MayPlay permission's copy, and the plot special action. A named
-     * mode Forge cannot offer is a harness row, not a different cast. */
+     * copy, a MayPlay permission's copy, and the plot, suspend and foretell
+     * special actions. A named mode Forge cannot offer is a harness row, not
+     * a different cast. */
     private SpellAbility spellForMode(Card c, Player p, String mode) {
         if (mode.isEmpty()) {
             return null;
@@ -951,6 +962,18 @@ public final class StepMachine {
                 }
             }
             throw new HarnessError("cast_mode suspend: " + c.getName() + " has no suspend ability");
+        }
+        if (mode.equals("foretell")) {
+            // Foretell (CR 702.143a) from hand is the {2} special action
+            // CardFactoryUtil builds for K:Foretell (an AbilityStatic whose
+            // isForetelling() is true), not a cast: the card is exiled face
+            // down and cast later for its foretell cost.
+            for (SpellAbility sa : c.getSpellAbilities()) {
+                if (sa.isForetelling()) {
+                    return sa;
+                }
+            }
+            throw new HarnessError("cast_mode foretell: " + c.getName() + " has no foretell ability");
         }
         if (mode.equals("mayplay")) {
             // A cast through a "you may cast that card" permission (Hurl
