@@ -37,6 +37,14 @@ import forge.game.spellability.TargetChoices;
  * answers no when no yes/no is queued and no subject spell (or subability)
  * holds a target; a targeted subject still consumes the queued answer, and
  * keeps the strict miss when gorge logged none.
+ *
+ * A second cluster, "Missing yesno answer at step 3: confirm null: Do you want
+ * to change targets of Ranger's Guile" (xpt-c5e9f646): p0 casts Ranger's Guile
+ * on Speedball, New Warrior, whose SpellCast trigger resolves "You may choose
+ * new targets for that spell" through ChangeTargets (Defined$
+ * TriggeredSpellAbility, Optional$ True). gorge logs its retarget ask as a
+ * choose_n whose only option is Speedball itself and whose pick is blank
+ * (keep the target); the confirm in front of it must consume that pick.
  */
 public class ChangeTargetsConfirmTest {
 
@@ -199,5 +207,17 @@ public class ChangeTargetsConfirmTest {
         assertNotNull(m.dq.take(0, DecisionQueue::isYesNo), "fixture must queue a yes/no answer");
         StrictMiss miss = expectStrictMiss(c, change, "Do you want to change targets of Reach Through Mists?");
         assertTrue(miss.getMessage().contains("Missing yesno answer at step 0: confirm null"), miss.getMessage());
+    }
+
+    @Test
+    public void speedballTriggerChangeTargetsConfirmConsumesTheRetargetPick() throws Exception {
+        ResultRow row = replay("speedball-ranger-guile.jsonl");
+        assertNull(row.harness, "harness row: " + row.harness);
+        assertNull(row.strictMiss, "strict miss: " + row.strictMiss);
+        assertNull(row.leftover, "unconsumed gorge decision: " + row.leftover);
+        assertTrue(row.notes.stream().anyMatch(n -> n.startsWith("change targets confirm step 3:")),
+                "the trigger's optional ChangeTargets confirm is answered from gorge's retarget pick, notes: " + row.notes);
+        assertTrue(row.notes.stream().anyMatch(n -> n.startsWith("retarget step 3:")),
+                "the retarget pick is consumed at chooseNewTargetsFor, notes: " + row.notes);
     }
 }
