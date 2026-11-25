@@ -668,11 +668,19 @@ public final class StepMachine {
     /** A checkpoint snapshot; the item's compare: ["offered"] adds what the
      * priority holder may play, each source named by its scenario ref. */
     private JsonObject snapshot(String checkpoint, boolean enteredStep) {
+        // completePendingAtUntapAsk names the receiving seat: the ask fires
+        // while the game still reports the passer, and gorge's checkpoint
+        // names the seat that receives the pass's priority (CR 117.3d).
+        return snapshot(checkpoint, enteredStep, askPriority);
+    }
+
+    private JsonObject snapshot(String checkpoint, boolean enteredStep, Player priority) {
         if (!req.comparesOffered()) {
-            return SnapshotWriter.snapshot(checkpoint, game, seats);
+            return SnapshotWriter.snapshot(checkpoint, game, seats, priority, null);
         }
         List<RefTable.Obj> live = liveObjects();
-        return SnapshotWriter.snapshot(checkpoint, game, seats, SnapshotWriter.offered(game, seats, enteredStep, c -> {
+        return SnapshotWriter.snapshot(checkpoint, game, seats, priority,
+                SnapshotWriter.offered(game, seats, enteredStep, c -> {
             RefTable.Obj o = null;
             for (RefTable.Obj l : live) {
                 if (l.id == c.getId()) {
@@ -699,6 +707,13 @@ public final class StepMachine {
         lastCheckpointTurn = ph.getTurn();
     }
 
+    /** gorge's untap-election contract (rules/turn.go): option 0 untaps,
+     * option 1 keeps tapped; an empty answer reads as untap. Set only for the
+     * checkpoint completePendingAtUntapAsk takes: the snapshot then names the
+     * seat that receives the pass's priority (CR 117.3d), not the passer the
+     * phase advance still reports. */
+    private Player askPriority;
+
     private void complete(String op) {
         // Only a pass can enter the declaration step with its declaration still
         // pending; an attack/block step's own checkpoint (an empty declaration
@@ -712,6 +727,32 @@ public final class StepMachine {
         castMode = "";
         stepTargets = new ArrayList<>();
         playPayers.clear();
+    }
+
+    /** Takes the current step's pending checkpoint at a pending optional-untap
+     * ask (CR 502.3): gorge stops cut scenarios with the choice pending, its
+     * snapshot taken there (step "untap"), not at the next priority the
+     * answer reaches; Forge reaches the ask between two priority callbacks,
+     * so the normal completion would snapshot one step later ("upkeep").
+     * Fires only for a pass/pass_to/resolve step whose checkpoint still
+     * awaits it -- those are the ops whose pending checkpoint spans the phase
+     * advance -- and reports whether it took one. */
+    boolean completePendingAtUntapAsk() {
+        if (stepIdx < 0 || stepIdx >= steps.size()) {
+            return false;
+        }
+        JsonObject st = steps.get(stepIdx).getAsJsonObject();
+        String op = Request.str(st, "op");
+        if (!acted || !(op.equals("pass") || op.equals("pass_to") || op.equals("resolve"))) {
+            return false;
+        }
+        // The seat that receives the pass's priority (CR 117.3d), in turn
+        // order after the passer.
+        int seat = st.has("seat") ? st.get("seat").getAsInt() : 0;
+        askPriority = seats[(seat + 1) % seats.length];
+        complete(op);
+        askPriority = null;
+        return true;
     }
 
     private List<SpellAbility> act(JsonObject st, String op, Player p) {
