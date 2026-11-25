@@ -104,6 +104,22 @@ public class OrderCardsTest {
         assertFalse(m.notes.toString().contains("loose"), m.notes.toString());
     }
 
+    /** Every other destination still strict-misses when no decision is
+     * queued: the fallback is deliberately limited to the graveyard and
+     * battlefield asks above, so a future zone with an order truth cannot
+     * silently keep Forge's order instead of reporting it. */
+    @Test
+    public void unpinnedOtherZoneStillLooseMisses() {
+        StepMachine m = machine("[]");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Forest", "Island"}) {
+            cards.add(card(m, name));
+        }
+        assertNull(m.orderCards(0, cards, "order to Exile"), "no fallback for Exile");
+        assertTrue(m.notes.toString().contains("loose: AI answered order"), m.notes.toString());
+    }
+
     /** A pin a checkpoint can see is still applied: the fallback only covers an
      * ask with no decision queued, so a real ordering difference is caught. */
     @Test

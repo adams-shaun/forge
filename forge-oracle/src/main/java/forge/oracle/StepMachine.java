@@ -777,6 +777,16 @@ public final class StepMachine {
                     + sc.getCounters(CounterEnumType.TIME) + " time counters");
             return;
         }
+        if (actedSa.isForetelling()) {
+            // Foretell is a special action (CR 702.143a, 116.2h): it uses no stack, the card
+            // is exiled face down and foretold.
+            Card fc = game.findById(actedHostId);
+            if (fc == null || !fc.isInZone(ZoneType.Exile) || !fc.isForetold()) {
+                throw new HarnessError("step " + stepIdx + " (foretell) " + Request.str(st, "card") + " was not foretold");
+            }
+            note("foretell step " + stepIdx + ": " + Request.str(st, "card") + " exiled face down, foretold");
+            return;
+        }
         boolean wantSpell = op.equals("cast");
         for (SpellAbilityStackInstance si : game.getStack()) {
             Card src = si.getSourceCard();
@@ -919,8 +929,9 @@ public final class StepMachine {
      * paid through chooseOptionalCosts and modeKeywordCost). Forge lists the
      * alternatives among Card.getAllPossibleAbilities: an Adventure or Omen
      * half, a modal back face, a warp or evoke cast, a static AlternativeCost
-     * copy, a MayPlay permission's copy, and the plot special action. A named
-     * mode Forge cannot offer is a harness row, not a different cast. */
+     * copy, a MayPlay permission's copy, and the plot, suspend and foretell
+     * special actions. A named mode Forge cannot offer is a harness row, not
+     * a different cast. */
     private SpellAbility spellForMode(Card c, Player p, String mode) {
         if (mode.isEmpty()) {
             return null;
@@ -940,6 +951,18 @@ public final class StepMachine {
                 }
             }
             throw new HarnessError("cast_mode suspend: " + c.getName() + " has no suspend ability");
+        }
+        if (mode.equals("foretell")) {
+            // Foretell (CR 702.143a) from hand is the {2} special action
+            // CardFactoryUtil builds for K:Foretell (an AbilityStatic whose
+            // isForetelling() is true), not a cast: the card is exiled face
+            // down and cast later for its foretell cost.
+            for (SpellAbility sa : c.getSpellAbilities()) {
+                if (sa.isForetelling()) {
+                    return sa;
+                }
+            }
+            throw new HarnessError("cast_mode foretell: " + c.getName() + " has no foretell ability");
         }
         if (mode.equals("mayplay")) {
             // A cast through a "you may cast that card" permission (Hurl
@@ -1996,13 +2019,14 @@ public final class StepMachine {
             // CR 404.3 lets the owner order a simultaneous graveyard move, but
             // a card that enters and leaves within one resolution is in neither
             // checkpoint, so forge_order.go cannot derive a pin for it; Forge
-            // still asks. The library is the only destination whose order gorge
-            // records (its arrange/dig decisions). For every other zone no
-            // decision means neither engine has an order to compare, so keep
-            // Forge's offered order instead of strict-missing the ask. A
-            // visible graveyard arrival still has its pin above, so a real
-            // ordering difference on a move a checkpoint can see is still
-            // caught.
+            // still asks. The same resolution asks "order to Battlefield" for
+            // the return, a zone gorge records no order for at all. Keep
+            // Forge's offered order for exactly those two destinations when no
+            // decision is queued; every other zone (library arrange/dig,
+            // exile, hand, command, stack, sideboard) still misses, so a
+            // future order truth there is not silently kept. A visible
+            // graveyard arrival still has its pin above, so a real ordering
+            // difference on a move a checkpoint can see is still caught.
             note("order step " + stepIdx + ": " + what + " (no order pin: keeping Forge's order)");
             return new ArrayList<>(cards);
         }
@@ -2010,13 +2034,15 @@ public final class StepMachine {
     }
 
     /** True for an order ask whose destination has no order pin when no
-     * decision is queued: every zone except the library, whose arrange/dig
-     * decisions are gorge's order truth. The graveyard's pin comes from the
-     * checkpoints, so a card that passes through in one resolution leaves no
-     * trace there; a battlefield, exile, hand or command-zone simultaneous
-     * move has no recorded order at all. */
+     * decision is queued, and whose order is therefore unobservable: the
+     * graveyard (a card that passes through in one resolution is in neither
+     * checkpoint) and the battlefield (a return in the same resolution, for
+     * which gorge records no order at all). The library is excluded because
+     * its arrange/dig decisions are gorge's order truth; every other zone is
+     * excluded too, so a future zone with an order truth strict-misses rather
+     * than silently keeping Forge's order. */
     private static boolean keepsForgeOrderWithoutPin(String what) {
-        return !what.contains("Library");
+        return what.endsWith("Graveyard") || what.endsWith("Battlefield");
     }
 
     /** The names of the gorge dig pick consumed at this step, when they are
