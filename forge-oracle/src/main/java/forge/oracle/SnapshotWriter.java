@@ -150,18 +150,27 @@ public final class SnapshotWriter {
     // ---- the snapshot ------------------------------------------------------
 
     public static JsonObject snapshot(String checkpoint, Game game, Player[] seats) {
-        return snapshot(checkpoint, game, seats, null);
+        return snapshot(checkpoint, game, seats, null, null);
     }
 
     /** The snapshot, with an "offered" array when {@code offered} is not null. */
     public static JsonObject snapshot(String checkpoint, Game game, Player[] seats, JsonArray offered) {
+        return snapshot(checkpoint, game, seats, null, offered);
+    }
+
+    /** The snapshot naming {@code priority} instead of the game's priority
+     * player when it is not null: a checkpoint taken while the game still
+     * reports the passer (a pending optional-untap ask, CR 502.3) names the
+     * seat that receives the pass's priority (CR 117.3d), as gorge records. */
+    public static JsonObject snapshot(String checkpoint, Game game, Player[] seats, Player priority,
+            JsonArray offered) {
         PhaseHandler ph = game.getPhaseHandler();
         JsonObject s = new JsonObject();
         s.addProperty("checkpoint", checkpoint);
         s.addProperty("turn", ph.getTurn());
         s.addProperty("step", stepName(ph.getPhase()));
         s.addProperty("active", seatOf(seats, ph.getPlayerTurn()));
-        s.addProperty("priority", seatOf(seats, ph.getPriorityPlayer()));
+        s.addProperty("priority", seatOf(seats, priority != null ? priority : ph.getPriorityPlayer()));
         s.addProperty("over", game.isGameOver());
         JsonArray players = new JsonArray();
         for (int i = 0; i < seats.length; i++) {
