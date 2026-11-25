@@ -190,7 +190,7 @@ public class ScriptedController extends PlayerControllerAi {
                 // gorge's label names the cost by its verb ("Discard 1 card",
                 // "Sacrifice creature or enchantment", "Forage"): bind to the
                 // one SA whose cost has that kind of part.
-                String verb = want.split(" ")[0];
+                String cls = costPartClassFor(want);
                 hit = null;
                 n = 0;
                 for (SpellAbility sa : abilities) {
@@ -198,8 +198,7 @@ public class ScriptedController extends PlayerControllerAi {
                         continue;
                     }
                     for (CostPart part : sa.getPayCosts().getCostParts()) {
-                        String cls = part.getClass().getSimpleName().toLowerCase(java.util.Locale.ROOT);
-                        if (cls.equals("cost" + verb)) {
+                        if (cls.equals(part.getClass().getSimpleName().toLowerCase(java.util.Locale.ROOT))) {
                             hit = sa;
                             n++;
                             break;
@@ -214,6 +213,64 @@ public class ScriptedController extends PlayerControllerAi {
         }
         m.miss("ability choice", "getAbilityToPlay over " + abilities.size() + " abilities of " + hostCard);
         return super.getAbilityToPlay(hostCard, abilities, triggerEvent);
+    }
+
+    /** The Forge CostPart class a gorge cost label binds to, by the label's own
+     * words (engine/rules/cost/format.go CostPhrase). Most labels name their
+     * class ("discard" -> CostDiscard, "forage" -> CostForage); where Forge's
+     * class name differs, map it explicitly: a tap of a named type
+     * ("tap 1 artifact") is CostTapType while a bare {T} is CostTap, and
+     * likewise untap; "pay" labels life (CostPayLife), energy (CostPayEnergy)
+     * or plain mana (CostPartMana); "take N damage" is CostDamage, a gain-life
+     * cost ("an opponent gains 2 life") is CostGainLife, "add N <kind>
+     * counters" is CostPutCounter, "put ... into your library" is
+     * CostPutCardToLib, "return ... to its owner's hand" is CostReturn, dice
+     * and coins are CostRollDice/CostFlipCoin and a chosen-reveal is
+     * CostRevealChosen. An unlisted verb keeps the "cost" + verb naming. */
+    static String costPartClassFor(String want) {
+        if (want.startsWith("tap ")) {
+            return want.equals("tap this permanent") ? "costtap" : "costtaptype";
+        }
+        if (want.startsWith("untap ")) {
+            return want.equals("untap this permanent") ? "costuntap" : "costuntaptype";
+        }
+        if (want.startsWith("pay ")) {
+            if (want.endsWith(" life")) {
+                return "costpaylife";
+            }
+            if (want.endsWith(" energy")) {
+                return "costpayenergy";
+            }
+            return "costpartmana";
+        }
+        if (want.endsWith(" life")) {
+            return "costgainlife";
+        }
+        if (want.startsWith("take ") && want.endsWith(" damage")) {
+            return "costdamage";
+        }
+        if (want.startsWith("add ") && want.endsWith("counter")) {
+            return "costputcounter";
+        }
+        if (want.startsWith("put ") && want.contains("into your library")) {
+            return "costputcardtolib";
+        }
+        if (want.startsWith("put ") && want.contains("from exile")) {
+            return "costexiledmovetograve";
+        }
+        if (want.startsWith("return ") && want.endsWith("hand")) {
+            return "costreturn";
+        }
+        if (want.startsWith("roll ")) {
+            return "costrolldice";
+        }
+        if (want.startsWith("flip ")) {
+            return "costflipcoin";
+        }
+        if (want.startsWith("reveal the chosen")) {
+            return "costrevealchosen";
+        }
+        return "cost" + want.split(" ")[0];
     }
 
     @Override
