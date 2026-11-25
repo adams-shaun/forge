@@ -289,8 +289,53 @@ public class ScriptedController extends PlayerControllerAi {
         if (t != null || optional && !m.hasCopyTargets(seat)) {
             return t; // null keeps the old targets
         }
+        if (!canChooseNewTargets(ability, filter)) {
+            // gorge poses no decision when no legal new target exists: the
+            // spell's target stays unchanged (CR 115.7a), so Forge's mandatory
+            // ask has nothing to choose from and keeping the targets is the
+            // answer, not a missing one.
+            m.note("new targets: no legal candidate for " + ability + "; targets kept");
+            return null;
+        }
         m.miss("new targets", String.valueOf(ability));
         return super.chooseNewTargetsFor(ability, filter, optional);
+    }
+
+    /** True unless Forge's own selection could not pick a new target here:
+     * fewer candidates pass the ability's target restrictions and the effect's
+     * filter than the declaration has targets (TargetSelection cancels and
+     * the old targets stay). Counted with the targets cleared, as Forge does,
+     * and restored. */
+    private static boolean canChooseNewTargets(SpellAbility ability, Predicate<GameObject> filter) {
+        SpellAbility sa = ability.isWrapper() ? ((forge.game.trigger.WrappedAbility) ability).getWrappedAbility() : ability;
+        if (!sa.usesTargeting() || sa.getTargets() == null || sa.getTargets().size() == 0) {
+            return true; // not a retarget this driver can reason about: keep the miss
+        }
+        TargetChoices old = sa.getTargets();
+        int need = old.size();
+        int have = 0;
+        sa.clearTargets();
+        try {
+            Game game = sa.getActivatingPlayer().getGame();
+            List<ZoneType> zones = sa.getTargetRestrictions().getZone();
+            if (zones.size() == 1 && zones.get(0) == ZoneType.Stack) {
+                for (SpellAbilityStackInstance si : game.getStack()) {
+                    SpellAbility onStack = si.getSpellAbility();
+                    if (sa.canTargetSpellAbility(onStack) && (filter == null || filter.test(onStack))) {
+                        have++;
+                    }
+                }
+            } else {
+                for (GameEntity e : sa.getTargetRestrictions().getAllCandidates(sa)) {
+                    if (filter == null || filter.test(e)) {
+                        have++;
+                    }
+                }
+            }
+        } finally {
+            sa.setTargets(old);
+        }
+        return have >= need;
     }
 
     @Override
