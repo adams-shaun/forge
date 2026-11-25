@@ -845,6 +845,20 @@ public final class StepMachine {
             if (fromCommand != null) {
                 return fromCommand;
             }
+        } else if (!c.isInZone(ZoneType.Hand)) {
+            // A cast from any other zone (Hurl Through Hell's exiled card, a
+            // graveyard or library permission) is the copy a MayPlay static
+            // grants: the card's own spell is restricted to the hand (CR
+            // 601.2a; SpellAbilityRestriction.checkZoneRestrictions). A card
+            // Forge grants no such cast for cannot be cast from this zone;
+            // fail loudly here rather than hand the caller a spell the zone
+            // restriction is certain to refuse.
+            SpellAbility fromElsewhere = mayPlaySpell(c, p);
+            if (fromElsewhere != null) {
+                return fromElsewhere;
+            }
+            throw new HarnessError(Request.str(st, "card") + " is in " + c.getZone().getZoneType()
+                    + " and Forge offers no may-play cast");
         }
         List<SpellAbility> spells = new ArrayList<>(c.getSpells());
         if (spells.isEmpty()) {
@@ -865,6 +879,21 @@ public final class StepMachine {
      * card cannot be cast now), so the caller falls back to the plain spell
      * and the step fails as Forge refuses it. */
     private SpellAbility commandZoneSpell(Card c, Player p) {
+        return mayPlaySpell(c, p, "the command zone");
+    }
+
+    /** The cast a MayPlay static grants c from outside the hand: Forge copies
+     * the card's spell with the zone restriction lifted (GameActionUtil's
+     * getMayPlaySpellOptions; getMayPlay is the granting static). Prefer a
+     * basic copy, as commandZoneSpell does, so a plain permission (Hurl
+     * Through Hell's exiled card) beats a cost-replacing copy; the first
+     * non-basic copy is the fallback for a "without paying its mana cost"
+     * grant. null when Forge grants no such cast. */
+    private SpellAbility mayPlaySpell(Card c, Player p) {
+        return mayPlaySpell(c, p, c.getZone() == null ? "no zone" : c.getZone().getZoneType().toString());
+    }
+
+    private SpellAbility mayPlaySpell(Card c, Player p, String zone) {
         game.getAction().checkStaticAbilities();
         SpellAbility alt = null;
         for (SpellAbility sa : c.getAllPossibleAbilities(p, false)) {
@@ -872,7 +901,7 @@ public final class StepMachine {
                 continue;
             }
             if (sa.isBasicSpell() && sa.getCardStateName() != forge.card.CardStateName.Backside) {
-                note("cast: from the command zone by " + sa.getMayPlay().getHostCard());
+                note("cast: from " + zone + " by " + sa.getMayPlay().getHostCard());
                 return sa;
             }
             if (alt == null) {
@@ -880,7 +909,7 @@ public final class StepMachine {
             }
         }
         if (alt != null) {
-            note("cast: from the command zone, no basic spell; took " + alt);
+            note("cast: from " + zone + ", no basic spell; took " + alt);
         }
         return alt;
     }
@@ -889,9 +918,9 @@ public final class StepMachine {
      * is the ordinary cast or an optional cost (kicker, offspring, ... are
      * paid through chooseOptionalCosts and modeKeywordCost). Forge lists the
      * alternatives among Card.getAllPossibleAbilities: an Adventure or Omen
-     * half, a modal back face, a warp cast, a static AlternativeCost copy,
-     * and the plot special action. A named mode Forge cannot offer is a
-     * harness row, not a different cast. */
+     * half, a modal back face, a warp cast, a static AlternativeCost copy, a
+     * MayPlay permission's copy, and the plot special action. A named mode
+     * Forge cannot offer is a harness row, not a different cast. */
     private SpellAbility spellForMode(Card c, Player p, String mode) {
         if (mode.isEmpty()) {
             return null;
@@ -911,6 +940,19 @@ public final class StepMachine {
                 }
             }
             throw new HarnessError("cast_mode suspend: " + c.getName() + " has no suspend ability");
+        }
+        if (mode.equals("mayplay")) {
+            // A cast through a "you may cast that card" permission (Hurl
+            // Through Hell's exiled card, a graveyard or library permission):
+            // the card's own spell is restricted to the hand, so the cast is
+            // the MayPlay-bound copy Forge offers. Explicitly asked for, so a
+            // card in the hand must still take the permission's copy; none is
+            // a harness row, not a different cast.
+            SpellAbility granted = mayPlaySpell(c, p);
+            if (granted == null) {
+                throw new HarnessError("cast_mode mayplay: " + c.getName() + " offers no may-play cast in Forge");
+            }
+            return granted;
         }
         java.util.function.Predicate<SpellAbility> want;
         switch (mode) {
