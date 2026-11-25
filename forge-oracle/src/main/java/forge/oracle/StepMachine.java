@@ -1008,6 +1008,12 @@ public final class StepMachine {
             // Evoke (CR 702.74a) is an alternative cost: Forge builds the
             // evoke spell as its own SpellAbility (AlternativeCost.Evoke).
             case "evoked": want = sa -> sa.isSpell() && sa.isEvoke(); break;
+            // A Room is a split card cast as one of its doors (CR 709.3,
+            // 709.3a); the second door ("alt") is the RightSplit card state.
+            // Forge lists each half as its own spell, so gorge's three mana
+            // for Promising Stairs / Prop Room pays the right half's cost
+            // rather than the unaffordable front door's.
+            case "room_alt": want = sa -> sa.isSpell() && sa.getCardStateName() == forge.card.CardStateName.RightSplit; break;
             default: return null;
         }
         // From the command zone only the Commander Effect's may-play copy can
