@@ -1037,7 +1037,14 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CardCollectionView chooseCardsForCost(CardCollectionView optionList, SpellAbility sa, CostPartWithList cpl, int amount, boolean isOptional, String prompt) {
-        List<Card> picked = m.pickObjects(seat, optionList, isOptional ? 0 : amount, amount, "cost card");
+        // Forge passes isOptional for an unless cost ("you may pay"), but once
+        // gorge's unless_pay answer elected the payment (payingUnlessCost) the
+        // whole cost is paid (CR 118.12, 601.2h): all `amount` cards are
+        // chosen, so an option list of exactly that size is a forced pick
+        // (Ill-Timed Explosion's Discard<2/Card> from a 2-card hand). A pick
+        // gorge did log is still consumed first by pickObjects.
+        int min = isOptional && !payingUnlessCost ? 0 : amount;
+        List<Card> picked = m.pickObjects(seat, optionList, min, amount, "cost card");
         return picked != null ? new CardCollection(picked) : super.chooseCardsForCost(optionList, sa, cpl, amount, isOptional, prompt);
     }
 
