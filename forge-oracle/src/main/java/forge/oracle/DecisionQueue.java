@@ -22,6 +22,7 @@ import com.google.gson.JsonObject;
  */
 public final class DecisionQueue {
     private static final Pattern X_LABEL = Pattern.compile("^\\s*X\\s*=\\s*(-?\\d+)\\s*$");
+    private static final Pattern LIFE_LABEL = Pattern.compile("^\\s*(\\d+)\\s+life\\s*$");
 
     /** One OracleDecision. */
     public static final class Decision {
@@ -251,6 +252,22 @@ public final class DecisionQueue {
             return null;
         }
         Matcher m = X_LABEL.matcher(d.picks.get(0));
+        return m.matches() ? Integer.valueOf(m.group(1)) : null;
+    }
+
+    /** A pay-any-amount-of-life choice (Phyrexian Processor's "pay any amount
+     * of life"): gorge's "choose" with pick kind "paylife" and an "N life"
+     * label, N = 0 included (CR 119.4, 118.3). Forge announces the amount as
+     * the X of a PayLife&lt;X&gt; cost. */
+    public static boolean isPayLifeAmount(Decision d) {
+        return d.kind.equals("choose_n") && d.pickKinds.contains("paylife") && payLifeValue(d) != null;
+    }
+
+    public static Integer payLifeValue(Decision d) {
+        if (d.picks.size() != 1) {
+            return null;
+        }
+        Matcher m = LIFE_LABEL.matcher(d.picks.get(0));
         return m.matches() ? Integer.valueOf(m.group(1)) : null;
     }
 

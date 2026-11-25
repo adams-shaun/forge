@@ -42,6 +42,7 @@ import forge.game.cost.CostDecisionMakerBase;
 import forge.game.cost.CostPart;
 import forge.game.cost.CostPartMana;
 import forge.game.cost.CostPartWithList;
+import forge.game.cost.CostPayLife;
 import forge.game.keyword.KeywordInterface;
 import forge.game.mana.Mana;
 import forge.game.mana.ManaConversionMatrix;
@@ -301,6 +302,20 @@ public class ScriptedController extends PlayerControllerAi {
         return super.chooseTarget(sa, allTargets);
     }
 
+    /** True when the ability's cost pays an X amount of life (PayLife&lt;X&gt;). */
+    private static boolean hasPayLifeX(SpellAbility ability) {
+        Cost cost = ability.getPayCosts();
+        if (cost == null) {
+            return false;
+        }
+        for (CostPart part : cost.getCostParts()) {
+            if (part instanceof CostPayLife && "X".equals(part.getAmount())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public Integer announceRequirements(SpellAbility ability, int min, int max, String announce) {
         if ("X".equalsIgnoreCase(announce)) {
@@ -309,6 +324,17 @@ public class ScriptedController extends PlayerControllerAi {
             if (v != null) {
                 m.note("announce X=" + v + " (range " + min + ".." + max + ")");
                 return v;
+            }
+            if (hasPayLifeX(ability)) {
+                // "Pay any amount of life" (Phyrexian Processor, Cost$ Mandatory
+                // PayLife<X>): gorge logs the amount as a paylife pick ("N life",
+                // 0 included), which Forge announces as the cost's X.
+                Decision life = take(DecisionQueue::isPayLifeAmount);
+                Integer n = life == null ? null : DecisionQueue.payLifeValue(life);
+                if (n != null) {
+                    m.note("announce X=" + n + " (range " + min + ".." + max + "; gorge: paylife)");
+                    return n;
+                }
             }
         }
         if (min == max) {
