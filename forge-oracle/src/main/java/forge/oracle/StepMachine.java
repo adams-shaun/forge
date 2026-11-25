@@ -918,9 +918,9 @@ public final class StepMachine {
      * is the ordinary cast or an optional cost (kicker, offspring, ... are
      * paid through chooseOptionalCosts and modeKeywordCost). Forge lists the
      * alternatives among Card.getAllPossibleAbilities: an Adventure or Omen
-     * half, a modal back face, a warp cast, a static AlternativeCost copy, a
-     * MayPlay permission's copy, and the plot special action. A named mode
-     * Forge cannot offer is a harness row, not a different cast. */
+     * half, a modal back face, a warp or evoke cast, a static AlternativeCost
+     * copy, a MayPlay permission's copy, and the plot special action. A named
+     * mode Forge cannot offer is a harness row, not a different cast. */
     private SpellAbility spellForMode(Card c, Player p, String mode) {
         if (mode.isEmpty()) {
             return null;
@@ -970,6 +970,9 @@ public final class StepMachine {
             // cast stays basic, so the first non-basic spell with no keyword
             // alternative is the option gorge's cast_mode "alternative" names.
             case "alternative": want = sa -> sa.isSpell() && sa.getAlternativeCost() == null && !sa.isBasicSpell(); break;
+            // Evoke (CR 702.74a) is an alternative cost: Forge builds the
+            // evoke spell as its own SpellAbility (AlternativeCost.Evoke).
+            case "evoked": want = sa -> sa.isSpell() && sa.isEvoke(); break;
             default: return null;
         }
         // From the command zone only the Commander Effect's may-play copy can
