@@ -1629,7 +1629,12 @@ public class ScriptedController extends PlayerControllerAi {
             // A lone legal kind is forced; the number ask consumes the picks.
             return options.get(0);
         }
-        CounterType ct = m.takeCounterKind(seat, options);
+        // RemoveCounter's remove-any-type follows this ask with chooseNumber,
+        // which counts the run of this kind's picks (takeCounterPicks), so the
+        // kind pick stays queued for it. Other asks consume their pick here.
+        CounterType ct = sa != null && sa.getApi() == ApiType.RemoveCounter
+                ? m.peekCounterKind(seat, options)
+                : m.takeCounterKind(seat, options);
         if (ct != null) {
             return ct;
         }

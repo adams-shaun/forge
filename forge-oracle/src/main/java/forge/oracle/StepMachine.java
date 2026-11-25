@@ -2414,25 +2414,37 @@ public final class StepMachine {
         return n;
     }
 
-    /** The next counter-kind pick naming one of Forge's offered types. */
+    /** The next counter-kind pick naming one of Forge's offered types,
+     * consumed: one pick answers one counter (a remove-any-counter cost). */
     CounterType takeCounterKind(int seat, List<CounterType> options) {
-        Decision d = take(seat, x -> {
-            if (!x.kind.equals("choose_n") || x.picks.size() != 1 || !isCounterKind(x)) {
-                return false;
-            }
-            for (CounterType ct : options) {
-                if (isCounterLabel(x.picks.get(0), ct)) {
-                    return true;
-                }
-            }
-            return false;
-        });
-        if (d == null) {
-            return null;
+        return notedCounterKind(take(seat, x -> isCounterKindPick(x, options)), options);
+    }
+
+    /** The next counter-kind pick naming one of Forge's offered types, left
+     * queued. CountersRemoveEffect.removeAnyType asks chooseCounterType then
+     * chooseNumber, and gorge logs one pick per counter removed, so the
+     * number ask (takeCounterPicks) counts and consumes this pick with the
+     * rest of its run. Taking it here removed one counter too few. */
+    CounterType peekCounterKind(int seat, List<CounterType> options) {
+        return notedCounterKind(peek(seat, x -> isCounterKindPick(x, options)), options);
+    }
+
+    private static boolean isCounterKindPick(Decision x, List<CounterType> options) {
+        return x.kind.equals("choose_n") && x.picks.size() == 1 && isCounterKind(x)
+                && counterKindOf(x, options) != null;
+    }
+
+    private CounterType notedCounterKind(Decision d, List<CounterType> options) {
+        CounterType ct = d == null ? null : counterKindOf(d, options);
+        if (ct != null) {
+            note("counter kind step " + stepIdx + ": " + ct.getName());
         }
+        return ct;
+    }
+
+    private static CounterType counterKindOf(Decision d, List<CounterType> options) {
         for (CounterType ct : options) {
             if (isCounterLabel(d.picks.get(0), ct)) {
-                note("counter kind step " + stepIdx + ": " + ct.getName());
                 return ct;
             }
         }

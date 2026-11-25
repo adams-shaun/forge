@@ -84,6 +84,22 @@ public class UnmappedAskTest {
                 "both loyalty counters are removed, not just the first");
     }
 
+    /** Mabel on Ajani Resolute with two loyalty and one +1/+1 counter: gorge
+     * removes LOYALTY, LOYALTY, P1P1 (CR 122.1) and Ajani dies at 0 loyalty
+     * (CR 704.5i). With two kinds offered, chooseCounterType took the first
+     * LOYALTY pick, so the amount ask counted one loyalty and Ajani lived. */
+    @Test
+    public void removeAnyTypeMixedKindsLeavesTheKindPickForTheAmount() throws Exception {
+        StepMachine m = replay("counter-remove-any-mixed-kinds.jsonl");
+        assertTrue(m.notes.stream().anyMatch(n -> n.equals("counter step 3: removed 2 Loyalty")),
+                "the kind pick is counted in the loyalty run, notes: " + m.notes);
+        assertTrue(m.notes.stream().anyMatch(n -> n.equals("counter step 3: removed 1 +1/+1")),
+                "the +1/+1 pick is removed too, notes: " + m.notes);
+        Card ajani = (Card) m.entity("p1:Ajani Resolute");
+        assertTrue(ajani.isInZone(ZoneType.Graveyard),
+                "Ajani Resolute at 0 loyalty goes to the graveyard, zone: " + ajani.getZone());
+    }
+
     @Test
     public void blightCostPicksTheLoneCreature() throws Exception {
         StepMachine m = replay("blight-cost.jsonl");
