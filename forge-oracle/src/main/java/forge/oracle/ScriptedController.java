@@ -482,6 +482,10 @@ public class ScriptedController extends PlayerControllerAi {
             m.note("empty animate confirm step " + m.step() + ": no (" + message + ")");
             return false;
         }
+        if (mode == null && emptyChangeTargetsConfirm(sa)) {
+            m.note("empty change targets confirm step " + m.step() + ": no (" + message + ")");
+            return false;
+        }
         Boolean b = m.yesNo(seat, "confirm " + mode + ": " + message);
         return b != null ? b : super.confirmAction(sa, mode, message, options, cardToShow, params);
     }
@@ -524,6 +528,48 @@ public class ScriptedController extends PlayerControllerAi {
         for (Card c : affected) {
             if (c.isInZone(ZoneType.Battlefield) && !c.isPhasedOut()) {
                 return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether this is an Optional$ ChangeTargets gate with nothing to retarget,
+     * which gorge never poses: Forge's ChangeTargetsEffect asks "Do you want to
+     * change targets of X?" for every Optional redirect, even when X has no
+     * targets (its own TODO), while gorge's effChangeTargets skips a declaration
+     * with no old targets (CR 115.7) and logs no decision. Answering no changes
+     * nothing. It holds only when no yes/no decision is queued for the seat and
+     * every subject spell the effect would walk (its target spells, or
+     * Defined$ when it is not a targeting ability; the same getTargetSpells
+     * choice ChangeTargetsEffect makes) and every subability in each spell's
+     * chain holds no target. A subject with a target keeps the strict miss when
+     * gorge logged no answer. */
+    private boolean emptyChangeTargetsConfirm(SpellAbility sa) {
+        if (sa == null || sa.getApi() != ApiType.ChangeTargets || !sa.hasParam("Optional")
+                || peek(DecisionQueue::isYesNo) != null) {
+            return false;
+        }
+        Card host = sa.getHostCard();
+        if (host == null) {
+            return false;
+        }
+        List<SpellAbility> subjects = new ArrayList<>();
+        TargetChoices targets = sa.getTargets();
+        if (targets != null) {
+            targets.getTargetSpells().forEach(subjects::add);
+        }
+        if (subjects.isEmpty() && sa.hasParam("Defined")) {
+            subjects.addAll(AbilityUtils.getDefinedSpellAbilities(host, sa.getParam("Defined"), sa));
+        }
+        if (subjects.isEmpty()) {
+            return false;
+        }
+        for (SpellAbility subject : subjects) {
+            for (SpellAbility link = subject; link != null; link = link.getSubAbility()) {
+                TargetChoices linkTargets = link.getTargets();
+                if (linkTargets != null && !linkTargets.isEmpty()) {
+                    return false;
+                }
             }
         }
         return true;
