@@ -1845,6 +1845,15 @@ public final class StepMachine {
             carryRefs.clear();
             carryOpen = false;
         }
+        if (!opts.isEmpty() && opts.size() <= min && queuedPickBelongsToLaterAsk(seat, opts)) {
+            // Forced: every option is required, so gorge, which logs no pick for
+            // a forced choice, logged none here; the queued pick names objects
+            // outside the options and answers a LATER ask of this step (a lone
+            // Sacrifice cost, then "put up to X lands onto the battlefield").
+            // Leave it queued for that ask.
+            note("pick step " + stepIdx + " " + what + ": forced, queued pick left for a later ask");
+            return opts;
+        }
         Decision d = take(seat, x -> DecisionQueue.isObjectChoice(x) || DecisionQueue.isEmptyChoice(x));
         if (d != null) {
             List<T> out = new ArrayList<>();
@@ -1950,6 +1959,32 @@ public final class StepMachine {
                 return false;
             }
         }) != null;
+    }
+
+    /** True when the next queued object pick for this seat names an object that
+     * is not among {@code opts}: it was made for another ask. An empty-choice
+     * decision (no refs) is not one: it still answers this ask as before. */
+    private <T extends GameEntity> boolean queuedPickBelongsToLaterAsk(int seat, List<T> opts) {
+        Decision next = null;
+        for (int st : decisionSteps()) {
+            next = dq.peek(st, x -> x.seat == seat
+                    && (DecisionQueue.isObjectChoice(x) || DecisionQueue.isEmptyChoice(x)));
+            if (next != null) {
+                break;
+            }
+        }
+        if (next == null || next.refs().isEmpty()) {
+            return false;
+        }
+        Set<T> used = new HashSet<>();
+        for (String ref : next.refs()) {
+            T o = matchRef(ref, opts, used);
+            if (o == null) {
+                return true;
+            }
+            used.add(o);
+        }
+        return false;
     }
 
     /** Forge's "Cancel search?" after each searched card: true while gorge's
