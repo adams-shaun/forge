@@ -46,6 +46,7 @@ import forge.game.spellability.AbilitySub;
 import forge.game.spellability.OptionalCostValue;
 import forge.game.spellability.SpellAbility;
 import forge.game.spellability.SpellAbilityStackInstance;
+import forge.game.trigger.TriggerType;
 import forge.game.zone.ZoneType;
 import forge.oracle.DecisionQueue.Decision;
 
@@ -2606,8 +2607,23 @@ public final class StepMachine {
     /** A role-bound keyword-trigger label outscores every text-prefix match. */
     private static final int KEYWORD_LABEL_SCORE = 1000;
 
+    /** gorge's labels of the monarch's designation triggers (engine/rules/trigger_queue.go triggerLabel, CR 725.2). */
+    private static final String MONARCH_DRAW_LABEL = "The monarch: draw a card";
+    private static final String MONARCH_DAMAGE_LABEL = "The monarch: that creature's controller becomes the monarch";
+    /** Forge hosts the monarch triggers on the effect card Player.createMonarchEffect names this. */
+    private static final String MONARCH_EFFECT_NAME = "The Monarch";
+
     private static int triggerScore(String label, SpellAbility sa) {
         String host = sa.getHostCard().getName();
+        // gorge's monarch triggers carry fixed synthetic text, and Forge's effect card words them differently
+        // ("At the beginning of your end step, draw a card."), so no text prefix matches. Bind by role: the end-step
+        // draw is the effect host's Phase trigger, the damage handoff its DamageDone trigger, and nothing else.
+        TriggerType monarchMode = label.equals(MONARCH_DRAW_LABEL) ? TriggerType.Phase
+                : label.equals(MONARCH_DAMAGE_LABEL) ? TriggerType.DamageDone : null;
+        if (monarchMode != null) {
+            return MONARCH_EFFECT_NAME.equals(host) && sa.getTrigger() != null
+                    && sa.getTrigger().getMode() == monarchMode ? KEYWORD_LABEL_SCORE : 0;
+        }
         String text = label;
         if (text.startsWith(host + ": ")) {
             text = text.substring(host.length() + 2);
