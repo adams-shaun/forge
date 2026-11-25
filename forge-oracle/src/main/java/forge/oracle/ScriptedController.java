@@ -1352,7 +1352,12 @@ public class ScriptedController extends PlayerControllerAi {
             m.orderCards(seat, cards, "order to " + destinationZone);
             return cards;
         }
-        List<Card> ordered = m.orderCards(seat, cards, "order to " + destinationZone);
+        // A Dig's picked cards bound for the library bottom (LibraryPosition$ -1,
+        // its default) are ordered by gorge's one "dig" pick, not an order decision.
+        boolean digToBottom = destinationZone == ZoneType.Library && source != null
+                && source.getApi() == ApiType.Dig
+                && "-1".equals(source.getParamOrDefault("LibraryPosition", "-1"));
+        List<Card> ordered = m.orderCards(seat, cards, "order to " + destinationZone, digToBottom);
         return ordered != null ? new CardCollection(ordered) : super.orderMoveToZoneList(cards, destinationZone, source);
     }
 
