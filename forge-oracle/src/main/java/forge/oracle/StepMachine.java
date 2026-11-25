@@ -2026,7 +2026,34 @@ public final class StepMachine {
                 return orderByNames(cards, picks, what + " (gorge's dig pick is the order)", Card::getName);
             }
         }
+        if (d == null && keepsForgeOrderWithoutPin(what)) {
+            // CR 404.3 lets the owner order a simultaneous graveyard move, but
+            // a card that enters and leaves within one resolution is in neither
+            // checkpoint, so forge_order.go cannot derive a pin for it; Forge
+            // still asks. The same resolution asks "order to Battlefield" for
+            // the return, a zone gorge records no order for at all. Keep
+            // Forge's offered order for exactly those two destinations when no
+            // decision is queued; every other zone (library arrange/dig,
+            // exile, hand, command, stack, sideboard) still misses, so a
+            // future order truth there is not silently kept. A visible
+            // graveyard arrival still has its pin above, so a real ordering
+            // difference on a move a checkpoint can see is still caught.
+            note("order step " + stepIdx + ": " + what + " (no order pin: keeping Forge's order)");
+            return new ArrayList<>(cards);
+        }
         return orderCardsByPicks(cards, d, what, Card::getName);
+    }
+
+    /** True for an order ask whose destination has no order pin when no
+     * decision is queued, and whose order is therefore unobservable: the
+     * graveyard (a card that passes through in one resolution is in neither
+     * checkpoint) and the battlefield (a return in the same resolution, for
+     * which gorge records no order at all). The library is excluded because
+     * its arrange/dig decisions are gorge's order truth; every other zone is
+     * excluded too, so a future zone with an order truth strict-misses rather
+     * than silently keeping Forge's order. */
+    private static boolean keepsForgeOrderWithoutPin(String what) {
+        return what.endsWith("Graveyard") || what.endsWith("Battlefield");
     }
 
     /** The names of the gorge dig pick consumed at this step, when they are
