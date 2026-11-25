@@ -3,6 +3,7 @@ package forge.oracle;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -369,6 +370,13 @@ public class ScriptedController extends PlayerControllerAi {
             return true; // not a retarget this driver can reason about: keep the miss
         }
         TargetChoices old = sa.getTargets();
+        // A retarget asks for a different target: a candidate that is already
+        // the target is not one (CR 115.7a). Forge's own selection clears the
+        // targets first (PlayerControllerHuman.chooseNewTargetsFor), so it does
+        // not exclude them; but re-picking the old target leaves the game
+        // unchanged, so a count without the old targets is what "a legal new
+        // target exists" means here.
+        Set<GameObject> current = new HashSet<>(old);
         int need = old.size();
         int have = 0;
         sa.clearTargets();
@@ -378,13 +386,13 @@ public class ScriptedController extends PlayerControllerAi {
             if (zones.size() == 1 && zones.get(0) == ZoneType.Stack) {
                 for (SpellAbilityStackInstance si : game.getStack()) {
                     SpellAbility onStack = si.getSpellAbility();
-                    if (sa.canTargetSpellAbility(onStack) && (filter == null || filter.test(onStack))) {
+                    if (!current.contains(onStack) && sa.canTargetSpellAbility(onStack) && (filter == null || filter.test(onStack))) {
                         have++;
                     }
                 }
             } else {
                 for (GameEntity e : sa.getTargetRestrictions().getAllCandidates(sa)) {
-                    if (filter == null || filter.test(e)) {
+                    if (!current.contains(e) && (filter == null || filter.test(e))) {
                         have++;
                     }
                 }

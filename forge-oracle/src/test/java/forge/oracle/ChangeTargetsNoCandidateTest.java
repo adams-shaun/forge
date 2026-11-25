@@ -2,6 +2,7 @@
 package forge.oracle;
 
 import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 
 import java.io.BufferedReader;
@@ -49,13 +50,21 @@ public class ChangeTargetsNoCandidateTest {
         return res.getParent().getParent().resolve("forge-oracle").resolve("fixtures").resolve("changetargets").resolve(name);
     }
 
-    private static ResultRow replay(String name) throws Exception {
-        Request req;
+    private static Request parse(String name) throws Exception {
         try (BufferedReader in = Files.newBufferedReader(fixture(name), StandardCharsets.UTF_8)) {
-            req = Request.parse(in.readLine());
+            return Request.parse(in.readLine());
         }
-        StepMachine m = new StepMachine(req, true);
+    }
+
+    private static ResultRow replay(String name) throws Exception {
+        StepMachine m = new StepMachine(parse(name), true);
         return m.run();
+    }
+
+    /** The batch driver's shape: strict first, then loose on a strict miss, so
+     * the row carries the miss in strictMiss. */
+    private static ResultRow replayBatch(String name) throws Exception {
+        return new ScenarioReplay(new ForgeEngine(), null).replay(parse(name));
     }
 
     @Test
@@ -68,5 +77,20 @@ public class ChangeTargetsNoCandidateTest {
                 "Forge's mandatory ask is answered by keeping the targets, notes: " + row.notes);
         assertTrue(row.notes.stream().noneMatch(n -> n.startsWith("loose: AI answered new targets")),
                 "the AI did not answer the new-targets ask, notes: " + row.notes);
+    }
+
+    /** The same game with a second Ornithopter (p1) that is never Bounce Offed:
+     * when Deflection resolves a legal new target still exists, but the gorge
+     * log holds no retarget decision, so the ask is still a strict miss. This
+     * pins the miss branch against a driver that keeps the targets whenever no
+     * decision exists. */
+    @Test
+    public void legalNewTargetWithNoGorgeDecisionIsStillAMiss() throws Exception {
+        ResultRow row = replayBatch("deflection-volley-second-flyer-still-miss.jsonl");
+        assertNotNull(row.strictMiss, "a legal new target with no gorge decision is still a miss, notes: " + row.notes);
+        assertTrue(row.strictMiss.contains("new targets"),
+                "the miss names the new-targets ask: " + row.strictMiss);
+        assertTrue(row.notes.stream().anyMatch(n -> n.startsWith("loose: AI answered new targets")),
+                "the loose attempt answered the ask and the game went on, notes: " + row.notes);
     }
 }
