@@ -1318,6 +1318,77 @@ public class ScriptedController extends PlayerControllerAi {
         return new ArrayList<>();
     }
 
+    /** Per-source amounts gorge chose for a MoveCounter ValidSource ask, read
+     * back by the per-source chooseNumber that follows. */
+    private final Map<Card, Integer> moveCounterAmounts = new java.util.HashMap<>();
+
+    /**
+     * MoveCounter with ValidSource$ and CounterNum$ Any (Aetherborn Marauder).
+     * Forge asks which sources to take from, then an amount per source. gorge
+     * logs the same election as a loop of move_counter_origin picks (only
+     * while more than one origin still holds counters; a lone remaining one is
+     * no choice) each followed by a move_counter amount. An empty origin pick
+     * or a 0 amount ends the election. The sources become the answer to the
+     * card ask, and the amounts wait for chooseNumber. Returns null when gorge
+     * logged none of this (the caller then answers as before).
+     */
+    private CardCollectionView moveCounterSources(CardCollectionView sourceList, CounterType ct) {
+        Map<Card, Integer> pending = new java.util.LinkedHashMap<>();
+        boolean any = false;
+        while (true) {
+            List<Card> remaining = new ArrayList<>();
+            for (Card c : sourceList) {
+                if (c.getCounters(ct) - pending.getOrDefault(c, 0) > 0) {
+                    remaining.add(c);
+                }
+            }
+            if (remaining.isEmpty()) {
+                break;
+            }
+            Card chosen = remaining.get(0);
+            if (remaining.size() > 1) {
+                Decision d = take(x -> x.resume.equals("move_counter_origin"));
+                if (d == null) {
+                    break;
+                }
+                any = true;
+                if (d.refs().isEmpty()) {
+                    m.note("move counter step " + m.step() + ": origin election declined");
+                    break;
+                }
+                List<Card> one = m.pickFrom(d, remaining, 1, 1, "card (move counters from)");
+                if (one == null) {
+                    break;
+                }
+                chosen = one.get(0);
+            }
+            Decision a = take(x -> x.resume.equals("move_counter") && x.picks.size() == 1);
+            if (a == null) {
+                break;
+            }
+            any = true;
+            int n;
+            try {
+                n = Integer.parseInt(a.picks.get(0).trim());
+            } catch (NumberFormatException e) {
+                m.miss("number", "move_counter amount " + a.picks.get(0));
+                break;
+            }
+            if (n <= 0) {
+                m.note("move counter step " + m.step() + ": 0 from " + chosen + " ends the election");
+                break;
+            }
+            pending.merge(chosen, n, Integer::sum);
+        }
+        if (!any) {
+            return null;
+        }
+        moveCounterAmounts.clear();
+        moveCounterAmounts.putAll(pending);
+        m.note("move counter sources: " + pending);
+        return new CardCollection(pending.keySet());
+    }
+
     // ---- object picks -------------------------------------------------------
 
     @Override
@@ -1328,6 +1399,13 @@ public class ScriptedController extends PlayerControllerAi {
             // pile A), which chooseCardsPile's twopiles_pick then resolves.
             m.note("two piles step " + m.stepIdx + ": one card, no split pick; the card is pile 1");
             return new CardCollection(sourceList);
+        }
+        if (sa != null && sa.getApi() == ApiType.MoveCounter && sa.hasParam("ValidSource") && params != null
+                && params.get("CounterType") instanceof CounterType ct) {
+            CardCollectionView sources = moveCounterSources(sourceList, ct);
+            if (sources != null) {
+                return sources;
+            }
         }
         List<Card> picked = m.pickObjects(seat, sourceList, isOptional ? 0 : min, max, "card (" + title + ")");
         return picked != null ? new CardCollection(picked) : super.chooseCardsForEffect(sourceList, sa, title, min, max, isOptional, params);
@@ -1761,6 +1839,11 @@ public class ScriptedController extends PlayerControllerAi {
     @Override
     public int chooseNumber(SpellAbility sa, String title, int min, int max, Map<String, Object> params) {
         Object kind = params == null ? null : params.get("CounterType");
+        if (sa != null && sa.getApi() == ApiType.MoveCounter && params != null
+                && params.get("Source") instanceof Card src && moveCounterAmounts.containsKey(src)) {
+            // The amount gorge logged with the source election above.
+            return Math.max(min, Math.min(max, moveCounterAmounts.remove(src)));
+        }
         // Two different asks carry a CounterType param. RemoveCounter's
         // per-counter kind election logs one choose_n[counter] pick per
         // counter removed, so that run is the amount. CountersPutEffect's
