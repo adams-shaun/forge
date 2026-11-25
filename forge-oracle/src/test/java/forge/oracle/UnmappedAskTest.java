@@ -100,6 +100,24 @@ public class UnmappedAskTest {
                 "Ajani Resolute at 0 loyalty goes to the graveyard, zone: " + ajani.getZone());
     }
 
+    /** Mabel on Ajani Resolute stopped early: gorge removes one LOYALTY then
+     * logs a remove_counter_done "Done". removeAnyType offers no Done type, so
+     * the kind ask consumes it and answers a legal type whose amount ask finds
+     * no pick and answers 0. Ajani keeps one loyalty and its +1/+1. */
+    @Test
+    public void removeAnyTypeDoneStopsTheUpToRemoval() throws Exception {
+        StepMachine m = replay("counter-remove-any-done.jsonl");
+        assertTrue(m.notes.stream().anyMatch(n -> n.equals("counter step 3: removed 1 Loyalty")),
+                "the LOYALTY pick is removed, notes: " + m.notes);
+        assertTrue(m.notes.stream().anyMatch(n -> n.equals("counter kind step 3: Done")),
+                "the Done pick is consumed at the kind ask, notes: " + m.notes);
+        Card ajani = (Card) m.entity("p1:Ajani Resolute");
+        assertTrue(ajani.isInZone(ZoneType.Battlefield),
+                "Ajani Resolute survives an early stop, zone: " + ajani.getZone());
+        assertEquals(ajani.getCounters(CounterEnumType.LOYALTY), 1, "one loyalty is left");
+        assertEquals(ajani.getCounters(CounterEnumType.P1P1), 1, "the +1/+1 is untouched");
+    }
+
     @Test
     public void blightCostPicksTheLoneCreature() throws Exception {
         StepMachine m = replay("blight-cost.jsonl");

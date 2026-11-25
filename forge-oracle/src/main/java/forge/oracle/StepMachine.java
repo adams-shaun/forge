@@ -2535,9 +2535,31 @@ public final class StepMachine {
      * queued. CountersRemoveEffect.removeAnyType asks chooseCounterType then
      * chooseNumber, and gorge logs one pick per counter removed, so the
      * number ask (takeCounterPicks) counts and consumes this pick with the
-     * rest of its run. Taking it here removed one counter too few. */
+     * rest of its run. Taking it here removed one counter too few.
+     *
+     * An UpTo removal stopped early logs "remove_counter_done" ("Done"),
+     * which names no Forge CounterType and which removeAnyType has no option
+     * for. When it is the next pick it is consumed here and the first offered
+     * type is answered: that type's chooseNumber finds no counter pick and
+     * answers 0 (min is 0 under UpTo), which is how removeAnyType stops. */
     CounterType peekCounterKind(int seat, List<CounterType> options) {
-        return notedCounterKind(peek(seat, x -> isCounterKindPick(x, options)), options);
+        Decision d = peek(seat, x -> isCounterDonePick(x) || isCounterKindPick(x, options));
+        if (d != null && isCounterDonePick(d)) {
+            if (options.isEmpty()) {
+                return null;
+            }
+            take(seat, x -> x == d);
+            note("counter kind step " + stepIdx + ": Done");
+            return options.get(0);
+        }
+        return notedCounterKind(d, options);
+    }
+
+    /** The "Done" option of an up-to remove-any-type election (gorge's
+     * remove_counter_done), read by its pick kind since it names no type. */
+    private static boolean isCounterDonePick(Decision d) {
+        return d.kind.equals("choose_n") && d.picks.size() == 1
+                && d.pickKinds.contains("remove_counter_done");
     }
 
     private static boolean isCounterKindPick(Decision x, List<CounterType> options) {
