@@ -50,17 +50,15 @@ public final class ForcedDieRandom extends Random {
         return w != null ? w : super.nextBoolean();
     }
 
-    /** The unbounded draw a MyRandom wrapper that routes nextBoolean through
-     * next(bits) lands on (MyRandom's CountingRandom derives the boolean from
-     * the delegate's unbounded nextInt() and takes its top bit): return the
-     * armed result with that bit set for true and clear for false. Nothing
-     * else in a replay draws unbounded, and a draw with no armed flip falls
-     * through to the seeded generator. */
-    @Override
-    public int nextInt() {
-        Boolean w = armedFlips.poll();
-        return w != null ? (w ? Integer.MIN_VALUE : 0) : super.nextInt();
-    }
+    // No nextInt() override on purpose. MyRandom's CountingRandom forwards
+    // nextBoolean (and both bounded forms) straight to this generator, and
+    // forge-oracle-run.sh refuses a pin that does not, so the coin flip never
+    // arrives as an unbounded draw. Other Forge code does draw unbounded:
+    // Aggregates.random over a non-List Iterable calls nextInt() once per item,
+    // and a token's art pick (Goblin Kaboomist's Land Mine, made on the same
+    // resolution as its flip) goes through it. An armed flip taken by such a
+    // draw is spent before FlipCoinEffect asks, and the flip falls to the
+    // seeded stream (Kaboomist survives a flip gorge lost).
 
     /** Arm the rolls and flips the request records for the step about to run.
      * A repeat call for the same step is a no-op: the step loop re-enters the

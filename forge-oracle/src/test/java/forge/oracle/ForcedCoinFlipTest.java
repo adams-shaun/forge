@@ -2,15 +2,24 @@
 package forge.oracle;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
+import java.io.BufferedReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Random;
 
 import org.testng.annotations.Test;
 
 import com.google.gson.JsonParser;
 
+import forge.util.Aggregates;
 import forge.util.MyRandom;
 
 /**
@@ -132,5 +141,86 @@ public class ForcedCoinFlipTest {
         } finally {
             MyRandom.setRandom(previous);
         }
+    }
+
+    @Test
+    public void anUnrelatedUnboundedDrawDoesNotSpendTheArmedFlip() {
+        // Goblin Kaboomist's upkeep trigger makes a Land Mine token and then
+        // flips. The token's art pick is Aggregates.random over a Set, which
+        // draws an unbounded nextInt() per item before the flip is asked; an
+        // armed flip those draws consumed left FlipCoinEffect to flip from the
+        // seeded stream (Kaboomist survived a flip gorge lost).
+        Random previous = MyRandom.getRandom();
+        try {
+            Request rq = req("[{\"step\":1,\"seat\":0,\"win\":false}]");
+            ForcedDieRandom r = new ForcedDieRandom(7, rq);
+            MyRandom.setRandom(r);
+            r.arm(1);
+            Aggregates.random(new LinkedHashSet<>(List.of("a", "b", "c")));
+            assertFalse(MyRandom.getRandom().nextBoolean(),
+                    "the recorded lost flip survives a set pick's unbounded draws");
+        } finally {
+            MyRandom.setRandom(previous);
+        }
+    }
+
+    private static Path fixture(String name) {
+        try {
+            Path p = Path.of(ForcedCoinFlipTest.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            while (p != null && !Files.isDirectory(p.resolve("fixtures"))) {
+                p = p.getParent();
+            }
+            if (p != null) {
+                return p.resolve("fixtures").resolve("coin").resolve(name);
+            }
+        } catch (Exception ignored) {
+            // Fall through to the res-relative path (a jar or a stripped tree).
+        }
+        Path res = Path.of(TestRes.res()).toAbsolutePath().normalize();
+        return res.getParent().getParent().resolve("forge-oracle").resolve("fixtures").resolve("coin").resolve(name);
+    }
+
+    private static ResultRow replay(String name) throws Exception {
+        Bootstrap.init(TestRes.res());
+        Request rq;
+        try (BufferedReader in = Files.newBufferedReader(fixture(name), StandardCharsets.UTF_8)) {
+            rq = Request.parse(in.readLine());
+        }
+        ResultRow row = new ForgeEngine().replayOnce(rq, true);
+        assertNull(row.harness, "strict replay failed: " + row.harness);
+        assertNull(row.strictMiss, "strict miss: " + row.strictMiss);
+        return row;
+    }
+
+    private static List<String> graveyard(ResultRow row, int seat) {
+        com.google.gson.JsonObject last = row.snapshots.get(row.snapshots.size() - 1);
+        List<String> out = new java.util.ArrayList<>();
+        for (com.google.gson.JsonElement pl : last.getAsJsonArray("players")) {
+            com.google.gson.JsonObject o = pl.getAsJsonObject();
+            if (o.get("seat").getAsInt() == seat) {
+                for (com.google.gson.JsonElement c : o.getAsJsonArray("graveyard")) {
+                    out.add(c.getAsString());
+                }
+            }
+        }
+        return out;
+    }
+
+    /** The xproof rng find xs:XP:goblin-kaboomist:f0t0:s2: the upkeep trigger
+     * (DB$ FlipCoin | LoseSubAbility$ DmgSelf, 2 damage to the 1/2 itself)
+     * resolves on step 37 after two mana activations in the same window. The
+     * pair is win and lose of the same flip: an unforced flip is the same on
+     * both rows whatever its seed, so a force that does not reach the flip
+     * fails exactly one of them. */
+    @Test
+    public void aLostUpkeepFlipKillsGoblinKaboomist() throws Exception {
+        assertEquals(graveyard(replay("goblin-kaboomist-upkeep-lose.jsonl"), 0), List.of("Goblin Kaboomist"),
+                "the recorded lost flip deals the 2 damage");
+    }
+
+    @Test
+    public void aWonUpkeepFlipSparesGoblinKaboomist() throws Exception {
+        assertEquals(graveyard(replay("goblin-kaboomist-upkeep-win.jsonl"), 0), List.of(),
+                "the recorded won flip deals no damage");
     }
 }
