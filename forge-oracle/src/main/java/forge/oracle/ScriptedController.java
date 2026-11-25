@@ -421,6 +421,15 @@ public class ScriptedController extends PlayerControllerAi {
             // changezone_alternative pick names it ("top" / "bottom", a zone).
             Decision d = take(x -> x.resume.equals("changezone_alternative") && x.picks.size() == 1);
             if (d != null) {
+                // gorge's AlternativeDecider$ ask (engine/effects/zone_change.go)
+                // has two kinds: "primary" is LibraryPosition$ (Forge's first
+                // option, "Top (2nd)" when it is 1, while gorge labels it
+                // "second from top") and "bottom" is the -1 alternative.
+                String kind = d.pickKinds.size() == 1 ? d.pickKinds.get(0) : "";
+                if (kind.equals("primary") || kind.equals("bottom")) {
+                    m.note("alt destination step " + m.step() + ": " + d.picks.get(0) + " (" + kind + ")");
+                    return kind.equals("primary");
+                }
                 String pick = d.picks.get(0).trim().toLowerCase(java.util.Locale.ROOT);
                 boolean first = options.get(0).toLowerCase(java.util.Locale.ROOT).startsWith(pick);
                 boolean second = options.get(1).toLowerCase(java.util.Locale.ROOT).startsWith(pick);
@@ -1245,8 +1254,53 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CardCollection chooseCardsForEffectMultiple(Map<String, CardCollection> validMap, SpellAbility sa, String title, boolean isOptional) {
+        // DigMultiple (In the Presence of Ages): at most one card per ChangeValid$
+        // category. gorge logs one choose_n[digmultiple] over the dug cards;
+        // its picks are the chosen cards, and an empty pick is the Optional$
+        // decline.
+        Decision d = take(x -> x.resume.equals("digmultiple"));
+        if (d != null) {
+            List<Card> union = new ArrayList<>();
+            for (CardCollection cc : validMap.values()) {
+                for (Card c : cc) {
+                    if (!union.contains(c)) {
+                        union.add(c);
+                    }
+                }
+            }
+            List<Card> picked = m.pickFrom(d, union, isOptional ? 0 : 1, validMap.size(), "cards (multiple) (" + title + ")");
+            if (picked != null && assignsOnePerCategory(validMap, picked)) {
+                return new CardCollection(picked);
+            }
+            if (picked != null) {
+                m.miss("cards (multiple)", "gorge's picks " + d.picks + " take more than one card of a category");
+            }
+        }
         m.miss("cards (multiple)", title);
         return super.chooseCardsForEffectMultiple(validMap, sa, title, isOptional);
+    }
+
+    /** Whether each picked card can stand for a distinct validMap category
+     * (DigMultiple chooses at most one card per ChangeValid$ entry). */
+    static boolean assignsOnePerCategory(Map<String, CardCollection> validMap, List<Card> picked) {
+        List<CardCollection> cats = new ArrayList<>(validMap.values());
+        return assign(cats, picked, 0, new boolean[cats.size()]);
+    }
+
+    private static boolean assign(List<CardCollection> cats, List<Card> picked, int i, boolean[] used) {
+        if (i == picked.size()) {
+            return true;
+        }
+        for (int k = 0; k < cats.size(); k++) {
+            if (!used[k] && cats.get(k).contains(picked.get(i))) {
+                used[k] = true;
+                if (assign(cats, picked, i + 1, used)) {
+                    return true;
+                }
+                used[k] = false;
+            }
+        }
+        return false;
     }
 
     @Override
