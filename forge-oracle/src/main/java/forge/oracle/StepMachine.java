@@ -889,8 +889,9 @@ public final class StepMachine {
      * is the ordinary cast or an optional cost (kicker, offspring, ... are
      * paid through chooseOptionalCosts and modeKeywordCost). Forge lists the
      * alternatives among Card.getAllPossibleAbilities: an Adventure or Omen
-     * half, a modal back face, a warp cast, and the plot special action. A
-     * named mode Forge cannot offer is a harness row, not a different cast. */
+     * half, a modal back face, a warp cast, a static AlternativeCost copy,
+     * and the plot special action. A named mode Forge cannot offer is a
+     * harness row, not a different cast. */
     private SpellAbility spellForMode(Card c, Player p, String mode) {
         if (mode.isEmpty()) {
             return null;
@@ -917,6 +918,16 @@ public final class StepMachine {
             case "omen_alt": want = sa -> sa.isSpell() && sa.isOmen(); break;
             case "modal_spell": want = sa -> sa.isSpell() && sa.getCardStateName() == forge.card.CardStateName.Backside; break;
             case "warped": want = sa -> sa.isSpell() && sa.isWarp(); break;
+            // StaticAbilityAlternativeCost copies a spell with the static's
+            // Cost in place of the printed mana cost (Submerge's "cast
+            // without paying its mana cost", Leyline of Mutation's alternative
+            // cost) and leaves AlternativeCost unset: that field is only for
+            // the keyword alternatives (Warp, Escape, ...). A may-play
+            // alternative that replaces the cost (Warped Space) is copied the
+            // same way and Forge marks it optional/non-basic too. The plain
+            // cast stays basic, so the first non-basic spell with no keyword
+            // alternative is the option gorge's cast_mode "alternative" names.
+            case "alternative": want = sa -> sa.isSpell() && sa.getAlternativeCost() == null && !sa.isBasicSpell(); break;
             default: return null;
         }
         // From the command zone only the Commander Effect's may-play copy can
