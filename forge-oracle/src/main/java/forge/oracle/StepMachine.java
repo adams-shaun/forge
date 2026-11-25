@@ -26,6 +26,7 @@ import forge.game.GameEntity;
 import forge.game.GameObject;
 import forge.game.GameRules;
 import forge.game.GameStage;
+import forge.game.ability.ApiType;
 import forge.game.GameType;
 import forge.game.Match;
 import forge.game.ability.AbilityFactory;
@@ -1921,6 +1922,16 @@ public final class StepMachine {
         }
         note("pick step " + stepIdx + " " + what + ": " + d.refs());
         return out;
+    }
+
+    /** Forge's "Divide cards into two piles" over exactly one card (min 0, max 1):
+     * true when no gorge object pick is queued for it. gorge's effTwoPiles skips
+     * the split ask for a one-card set (the two splits are the same partition,
+     * CR 700.3), so there is nothing to consume and the card is pile 1. A queued
+     * object pick (a real split) leaves this false and pickObjects answers it. */
+    boolean loneTwoPilesSplit(int seat, SpellAbility sa, int size, int min, int max) {
+        return sa != null && sa.getApi() == ApiType.TwoPiles && size == 1 && min == 0 && max == 1
+                && peek(seat, x -> DecisionQueue.isObjectChoice(x) || DecisionQueue.isEmptyChoice(x)) == null;
     }
 
     /** Consumes gorge's one-option pick of the lone forced entity Forge asks
