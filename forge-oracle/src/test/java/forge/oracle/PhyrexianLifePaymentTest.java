@@ -86,4 +86,42 @@ public class PhyrexianLifePaymentTest {
         assertEquals(souleater.getController().getLife(), 18, "{R/P} was paid with 2 life");
         assertEquals(souleater.getNetPower(), 2, "the pump resolved: 1/1 +1/+0");
     }
+
+    /** K'rrik, Son of Yawgmoth ("PayLifeInsteadOf:B", CR 601.2h, 118.9): gorge's
+     * pay_life pick on a plain {B} pip pays Muck Rats with 2 life, so the cast
+     * leaves the untapped Swamp alone and the seat at 18. */
+    @Test
+    public void krrikPaysTheBlackPipWithTwoLife() throws Exception {
+        ResultRow[] row = new ResultRow[1];
+        StepMachine m = run("krrik-muck-rats-cast.jsonl", row);
+
+        assertNull(row[0].harness, "harness row: " + row[0].harness);
+        assertNull(row[0].leftover, "unconsumed gorge decision: " + row[0].leftover);
+        assertTrue(row[0].notes.stream().anyMatch(n -> n.startsWith("pay black with 2 life step 0")),
+                "notes: " + row[0].notes);
+        Card rats = (Card) m.entity("p0:Muck Rats");
+        assertNotNull(rats);
+        assertEquals(rats.getController().getLife(), 18, "{B} was paid with 2 life");
+        Card swamp = (Card) m.entity("p0:Swamp");
+        assertNotNull(swamp);
+        assertTrue(!swamp.isTapped(), "the Swamp was not tapped for the life-paid pip");
+        assertTrue(rats.isInZone(forge.game.zone.ZoneType.Stack), "Muck Rats is on the stack");
+    }
+
+    /** No pay_life pick, no life: with K'rrik out, a {B} pip gorge paid with the
+     * Swamp stays a mana payment and the seat keeps 20 life. */
+    @Test
+    public void krrikWithoutALifePickStillPaysMana() throws Exception {
+        ResultRow[] row = new ResultRow[1];
+        StepMachine m = run("krrik-muck-rats-cast-mana.jsonl", row);
+
+        assertNull(row[0].harness, "harness row: " + row[0].harness);
+        assertNull(row[0].leftover, "unconsumed gorge decision: " + row[0].leftover);
+        assertTrue(row[0].notes.stream().noneMatch(n -> n.contains("with 2 life")), "notes: " + row[0].notes);
+        Card rats = (Card) m.entity("p0:Muck Rats");
+        assertNotNull(rats);
+        assertEquals(rats.getController().getLife(), 20, "no life was paid");
+        Card swamp = (Card) m.entity("p0:Swamp");
+        assertTrue(swamp.isTapped(), "the Swamp paid the {B}");
+    }
 }
