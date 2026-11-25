@@ -1280,6 +1280,27 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CardCollection chooseCardsToDiscardFrom(Player playerDiscard, SpellAbility sa, CardCollection validCards, int min, int max, CardCollectionView visibleToChooser) {
+        if (min == 0 && max > 0) {
+            // "You may discard a card" (DiscardEffect Mode$ TgtChoose with
+            // Optional$ True) is one 0..N pick in Forge. gorge poses it as two
+            // asks (effDiscardTgtChoose, resume discard_may): a yes/no election,
+            // then the card pick, which it skips when the options are forced
+            // (CR 701.9a, 608.2c). Read the election here: no discards nothing,
+            // yes is the 1..N pick gorge goes on to make (a lone card is
+            // forced). A DiscardEffect AnyNumber$ pick has no election, so
+            // nothing is queued and its 0..N pick below is unchanged.
+            Decision election = take(x -> x.resume.equals("discard_may") && DecisionQueue.isYesNo(x));
+            if (election != null) {
+                boolean yes = DecisionQueue.yes(election);
+                m.note("discard election step " + m.step() + ": " + (yes ? "yes" : "no"));
+                if (!yes) {
+                    return new CardCollection();
+                }
+                List<Card> picked = m.pickObjects(seat, validCards, 1, max, "discard");
+                return picked != null ? new CardCollection(picked)
+                        : super.chooseCardsToDiscardFrom(playerDiscard, sa, validCards, 1, max, visibleToChooser);
+            }
+        }
         List<Card> picked = m.pickObjects(seat, validCards, min, max, "discard");
         return picked != null ? new CardCollection(picked) : super.chooseCardsToDiscardFrom(playerDiscard, sa, validCards, min, max, visibleToChooser);
     }
