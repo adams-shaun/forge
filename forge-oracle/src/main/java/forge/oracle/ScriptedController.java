@@ -421,6 +421,15 @@ public class ScriptedController extends PlayerControllerAi {
             // changezone_alternative pick names it ("top" / "bottom", a zone).
             Decision d = take(x -> x.resume.equals("changezone_alternative") && x.picks.size() == 1);
             if (d != null) {
+                // gorge's AlternativeDecider$ ask (engine/effects/zone_change.go)
+                // has two kinds: "primary" is LibraryPosition$ (Forge's first
+                // option, "Top (2nd)" when it is 1, while gorge labels it
+                // "second from top") and "bottom" is the -1 alternative.
+                String kind = d.pickKinds.size() == 1 ? d.pickKinds.get(0) : "";
+                if (kind.equals("primary") || kind.equals("bottom")) {
+                    m.note("alt destination step " + m.step() + ": " + d.picks.get(0) + " (" + kind + ")");
+                    return kind.equals("primary");
+                }
                 String pick = d.picks.get(0).trim().toLowerCase(java.util.Locale.ROOT);
                 boolean first = options.get(0).toLowerCase(java.util.Locale.ROOT).startsWith(pick);
                 boolean second = options.get(1).toLowerCase(java.util.Locale.ROOT).startsWith(pick);
