@@ -2,6 +2,7 @@
 package forge.oracle;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
@@ -11,6 +12,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.testng.annotations.Test;
+
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 
 import forge.game.card.Card;
 import forge.game.card.CounterEnumType;
@@ -173,5 +177,69 @@ public class UnmappedAskTest {
         Card shield = (Card) m.entity("p1:Shield Sphere");
         assertTrue(shield.isInZone(ZoneType.Exile),
                 "the recorded search pick exiles Shield Sphere, not the chooser's own card");
+    }
+
+    /** Replays through ForgeEngine, as production does, so the fixture's
+     * die_rolls are forced (3 and 6) instead of the seeded generator's. */
+    private static ResultRow rawReplay(String name) throws Exception {
+        Bootstrap.init(TestRes.res());
+        Request req;
+        try (BufferedReader in = Files.newBufferedReader(fixture(name), StandardCharsets.UTF_8)) {
+            req = Request.parse(in.readLine());
+        }
+        java.util.Random previous = forge.util.MyRandom.getRandom();
+        try {
+            return new ForgeEngine().replayOnce(req, true);
+        } finally {
+            forge.util.MyRandom.setRandom(previous);
+        }
+    }
+
+    private static int knightTokens(ResultRow row) {
+        JsonObject last = row.snapshots.get(row.snapshots.size() - 1);
+        int n = 0;
+        for (JsonElement e : last.getAsJsonArray("permanents")) {
+            if (e.getAsJsonObject().get("name").getAsString().equals("Knight Token")) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** Valiant Endeavor (CR 706.2): roll two d6 (forced 3 and 6), choose one
+     * result as X (destroy each creature with power X or greater), the other
+     * is Y (Y 2/2 Knight tokens). RollDiceEffect's ChosenSVar$ asks the
+     * values-list chooseNumber, which missed unconditionally, so gorge's
+     * choose_n[number] pick 3 stayed unconsumed (xproof clusters xpt-8a6bce20,
+     * xpt-c9c0e640). Pick 3 makes Y 6: six Knights. */
+    @Test
+    public void chosenDieResultAnswersTheValuesListNumber() throws Exception {
+        ResultRow row = rawReplay("valiant-endeavor-chosen-die.jsonl");
+        assertTrue(row.strict, "the replay must be strict, strict_miss: " + row.strictMiss);
+        assertNull(row.strictMiss, "strict miss: " + row.strictMiss);
+        assertNull(row.harness, "harness row: " + row.harness);
+        assertNull(row.leftover, "unconsumed gorge decision: " + row.leftover);
+        assertTrue(row.notes.contains("number step 8: 3 of [3, 6]"), "gorge's pick answers the ask, notes: " + row.notes);
+        assertEquals(knightTokens(row), 6, "X=3, so Y=6 Knight tokens");
+    }
+
+    /** The same rolls with gorge choosing 6: X=6, Y=3, three Knights. */
+    @Test
+    public void chosenDieResultSixMakesThreeKnights() throws Exception {
+        ResultRow row = rawReplay("valiant-endeavor-chosen-die-six.jsonl");
+        assertNull(row.strictMiss, "strict miss: " + row.strictMiss);
+        assertNull(row.leftover, "unconsumed gorge decision: " + row.leftover);
+        assertEquals(knightTokens(row), 3, "X=6, so Y=3 Knight tokens");
+    }
+
+    /** A pick that is not a rolled result (4 over [3, 6]) is not taken: it
+     * stays a strict miss. */
+    @Test
+    public void unofferedDieResultStaysAStrictMiss() throws Exception {
+        ResultRow row = rawReplay("valiant-endeavor-chosen-die-unoffered.jsonl");
+        assertTrue(row.strict, "the replay must be strict");
+        String miss = row.strictMiss != null ? row.strictMiss : row.harness;
+        assertNotNull(miss, "an unoffered number must strict-miss");
+        assertTrue(miss.contains("number"), "want the number miss, got: " + miss);
     }
 }

@@ -3008,6 +3008,27 @@ public final class StepMachine {
         return n;
     }
 
+    /** A number chosen from an offered list (RollDiceEffect's ChosenSVar$:
+     * "choose one of the results", CR 706.2). gorge logs one numeric choose_n
+     * (pick kind "number"). Taken only when the pick is one of the offered
+     * values; otherwise it stays queued, so the miss names it. A repeated
+     * value (two dice rolled 3) still matches. */
+    Integer chooseNumberFrom(int seat, java.util.List<Integer> values) {
+        Predicate<Decision> isNumber = x -> x.kind.equals("choose_n") && x.picks.size() == 1 && !DecisionQueue.isX(x)
+                && number(x.picks.get(0)) != null;
+        Decision d = peek(seat, isNumber);
+        if (d == null) {
+            return null;
+        }
+        Integer n = number(d.picks.get(0));
+        if (!values.contains(n)) {
+            return null;
+        }
+        take(seat, x -> x == d);
+        note("number step " + stepIdx + ": " + n + " of " + values);
+        return n;
+    }
+
     /** The amount a "choose any number" ask announces (Forge's
      * announceRequirements with a non-X title: the Join Forces scripts'
      * ListTitle$ "amount of mana to pay"). gorge logs it as a choose_n whose

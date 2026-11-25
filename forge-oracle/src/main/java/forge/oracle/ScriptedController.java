@@ -2218,7 +2218,11 @@ public class ScriptedController extends PlayerControllerAi {
         if (values.size() == 1) {
             return values.get(0);
         }
-        return missThen("number", () -> super.chooseNumber(sa, title, values, relatedPlayer));
+        // RollDiceEffect's ChosenSVar$ (Valiant Endeavor): the caster picks one
+        // rolled result. gorge logs it as one numeric choose_n; answer it when
+        // the pick is offered, else miss.
+        Integer n = m.chooseNumberFrom(seat, values);
+        return n != null ? n : missThen("number", () -> super.chooseNumber(sa, title, values, relatedPlayer));
     }
 
     @Override
