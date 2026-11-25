@@ -2150,13 +2150,25 @@ public final class StepMachine {
     /** True for an order ask whose destination has no order pin when no
      * decision is queued, and whose order is therefore unobservable: the
      * graveyard (a card that passes through in one resolution is in neither
-     * checkpoint) and the battlefield (a return in the same resolution, for
-     * which gorge records no order at all). The library is excluded because
-     * its arrange/dig decisions are gorge's order truth; every other zone is
-     * excluded too, so a future zone with an order truth strict-misses rather
-     * than silently keeping Forge's order. */
+     * checkpoint), the battlefield (a return in the same resolution, for
+     * which gorge records no order at all), and the hand (the snapshot sorts
+     * a hand's names, so its order is not part of the game state; the Wrenn
+     * and Seven -8 returns the planeswalker and seven Forests this way). The
+     * library is excluded because its arrange/dig decisions are gorge's order
+     * truth; exile and every other zone are excluded too, so a future zone
+     * with an order truth strict-misses rather than silently keeping Forge's
+     * order. Every order ask routes through this one gate, so a new ask for
+     * one of these zones cannot miss the fallback. */
+    private static final Set<String> UNOBSERVABLE_ORDER_ZONES =
+            Set.of("Graveyard", "Battlefield", "Hand");
+
     private static boolean keepsForgeOrderWithoutPin(String what) {
-        return what.endsWith("Graveyard") || what.endsWith("Battlefield");
+        for (String zone : UNOBSERVABLE_ORDER_ZONES) {
+            if (what.endsWith(zone)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The names of the gorge dig pick consumed at this step, when they are
