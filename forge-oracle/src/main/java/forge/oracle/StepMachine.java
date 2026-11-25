@@ -1992,7 +1992,31 @@ public final class StepMachine {
                 return orderByNames(cards, picks, what + " (gorge's dig pick is the order)", Card::getName);
             }
         }
+        if (d == null && keepsForgeOrderWithoutPin(what)) {
+            // CR 404.3 lets the owner order a simultaneous graveyard move, but
+            // a card that enters and leaves within one resolution is in neither
+            // checkpoint, so forge_order.go cannot derive a pin for it; Forge
+            // still asks. The library is the only destination whose order gorge
+            // records (its arrange/dig decisions). For every other zone no
+            // decision means neither engine has an order to compare, so keep
+            // Forge's offered order instead of strict-missing the ask. A
+            // visible graveyard arrival still has its pin above, so a real
+            // ordering difference on a move a checkpoint can see is still
+            // caught.
+            note("order step " + stepIdx + ": " + what + " (no order pin: keeping Forge's order)");
+            return new ArrayList<>(cards);
+        }
         return orderCardsByPicks(cards, d, what, Card::getName);
+    }
+
+    /** True for an order ask whose destination has no order pin when no
+     * decision is queued: every zone except the library, whose arrange/dig
+     * decisions are gorge's order truth. The graveyard's pin comes from the
+     * checkpoints, so a card that passes through in one resolution leaves no
+     * trace there; a battlefield, exile, hand or command-zone simultaneous
+     * move has no recorded order at all. */
+    private static boolean keepsForgeOrderWithoutPin(String what) {
+        return !what.contains("Library");
     }
 
     /** The names of the gorge dig pick consumed at this step, when they are
