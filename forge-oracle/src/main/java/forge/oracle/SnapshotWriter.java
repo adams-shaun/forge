@@ -200,11 +200,15 @@ public final class SnapshotWriter {
      * {@link BridgeController#offer}, the one the bridge answers priority from
      * (playable and payable now), plus the mana abilities. Nobody holding
      * priority (the game ended, or a checkpoint outside a priority window)
-     * offers nothing. */
-    public static JsonArray offered(Game game, Player[] seats, java.util.function.Function<Card, String> refOf) {
+     * offers nothing. {@code enteredStep}: the checkpoint is a pass that
+     * entered the current step (not a declaration step's own checkpoint, nor a
+     * later priority in the step), the only place a pending declaration can be
+     * the checkpoint. */
+    public static JsonArray offered(Game game, Player[] seats, boolean enteredStep,
+            java.util.function.Function<Card, String> refOf) {
         JsonArray out = new JsonArray();
         Player holder = game.getPhaseHandler().getPriorityPlayer();
-        if (holder == null || game.isGameOver() || declarationPending(game, seats)) {
+        if (holder == null || game.isGameOver() || (enteredStep && declarationPending(game, seats))) {
             return out;
         }
         for (forge.game.spellability.SpellAbility sa : BridgeController.offer(game, holder, new ArrayList<>(), true)) {
@@ -230,8 +234,9 @@ public final class SnapshotWriter {
      * without a declaration. With no legal option gorge records the forced
      * empty declaration inside the step transition and its checkpoint is the
      * live priority that follows, which does offer the holder's options; a
-     * declaration already made (an attack or block step) is evidence of an
-     * option and leaves the priority that follows it a priority. */
+     * declaration already made (an attack or block step, even an empty one) is
+     * evidence of an option and leaves the priority that follows it a
+     * priority: callers ask only for a pass that entered the step. */
     static boolean declarationPending(Game game, Player[] seats) {
         PhaseHandler ph = game.getPhaseHandler();
         PhaseType phase = ph.getPhase();

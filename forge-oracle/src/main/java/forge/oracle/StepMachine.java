@@ -406,7 +406,8 @@ public final class StepMachine {
             // gorge's xmageFixture setup stops at the FIRST main-1 priority of
             // the scenario turn, even with a non-empty stack (oracle_run.go:622-647).
             if (ph.getTurn() == targetTurn && ph.is(PhaseType.MAIN1) && p == ph.getPlayerTurn()) {
-                snaps.add(snapshot("setup"));
+                snaps.add(snapshot("setup", false));
+                noteCheckpointStep();
                 stepIdx = 0;
                 acted = false;
             } else {
@@ -666,12 +667,12 @@ public final class StepMachine {
 
     /** A checkpoint snapshot; the item's compare: ["offered"] adds what the
      * priority holder may play, each source named by its scenario ref. */
-    private JsonObject snapshot(String checkpoint) {
+    private JsonObject snapshot(String checkpoint, boolean enteredStep) {
         if (!req.comparesOffered()) {
             return SnapshotWriter.snapshot(checkpoint, game, seats);
         }
         List<RefTable.Obj> live = liveObjects();
-        return SnapshotWriter.snapshot(checkpoint, game, seats, SnapshotWriter.offered(game, seats, c -> {
+        return SnapshotWriter.snapshot(checkpoint, game, seats, SnapshotWriter.offered(game, seats, enteredStep, c -> {
             RefTable.Obj o = null;
             for (RefTable.Obj l : live) {
                 if (l.id == c.getId()) {
@@ -684,8 +685,27 @@ public final class StepMachine {
         }));
     }
 
+    private PhaseType lastCheckpointPhase;
+    private int lastCheckpointTurn = -1;
+
+    private boolean stepChangedSinceCheckpoint() {
+        PhaseHandler ph = game.getPhaseHandler();
+        return ph.getPhase() != lastCheckpointPhase || ph.getTurn() != lastCheckpointTurn;
+    }
+
+    private void noteCheckpointStep() {
+        PhaseHandler ph = game.getPhaseHandler();
+        lastCheckpointPhase = ph.getPhase();
+        lastCheckpointTurn = ph.getTurn();
+    }
+
     private void complete(String op) {
-        snaps.add(snapshot("step " + stepIdx + " (" + op + ")"));
+        // Only a pass can enter the declaration step with its declaration still
+        // pending; an attack/block step's own checkpoint (an empty declaration
+        // included), or a later priority in the same step, is a live priority.
+        boolean entered = (op.equals("pass") || op.equals("pass_to")) && stepChangedSinceCheckpoint();
+        snaps.add(snapshot("step " + stepIdx + " (" + op + ")", entered));
+        noteCheckpointStep();
         stepIdx++;
         acted = false;
         actedSa = null;
