@@ -1792,6 +1792,10 @@ public final class StepMachine {
                 return null;
             }
             note("pick step " + stepIdx + " " + what + ": " + d.refs() + (noop ? " (no-op)" : ""));
+            if (d.resume.equals("dig") && !noop && carryRefs.isEmpty() && d.picks.size() == out.size()) {
+                digPickStep = stepIdx;
+                digPickNames = new ArrayList<>(d.picks);
+            }
             return out;
         }
         if (max == 0) {
@@ -1838,6 +1842,11 @@ public final class StepMachine {
         }
         return more;
     }
+
+    // The last gorge "dig" pick this step consumed: the names of the cards that
+    // went to the library position, in pick order (see orderCards).
+    private int digPickStep = -99;
+    private List<String> digPickNames;
 
     private int carryStep = -99;
     private int carrySeat = -1;
@@ -1887,6 +1896,17 @@ public final class StepMachine {
      * order unobservable, but Forge still asks, so the matching decision is
      * consumed rather than left over. */
     List<Card> orderCards(int seat, Collection<Card> cards, String what) {
+        return orderCards(seat, cards, what, false);
+    }
+
+    /** As {@link #orderCards(int, Collection, String)}; digPickedToBottom says
+     * the cards are the ones a Dig's selection sent to the library BOTTOM
+     * (Spin into Myth's fateseal: DigNum$ 2, ChangeNum$ Any, LibraryPosition$
+     * -1). gorge logs no order decision for them: its one choose_n "dig" pick
+     * is the move order, first pick moved first, so each successive bottom
+     * placement leaves the first pick topmost of the pile. When no order
+     * decision exists, Forge's own order ask is answered from that pick. */
+    List<Card> orderCards(int seat, Collection<Card> cards, String what, boolean digPickedToBottom) {
         Set<String> names = new HashSet<>();
         for (Card c : cards) {
             names.add(c.getName());
@@ -1910,7 +1930,38 @@ public final class StepMachine {
         Decision d = what.contains("Graveyard")
                 ? take(seat, DecisionQueue::isGraveyardOrder)
                 : take(seat, DecisionQueue::isCardOrder);
+        if (d == null && digPickedToBottom && !what.contains("Graveyard")) {
+            List<String> picks = takeDigPick(cards, Card::getName);
+            if (picks != null) {
+                return orderByNames(cards, picks, what + " (gorge's dig pick is the order)", Card::getName);
+            }
+        }
         return orderCardsByPicks(cards, d, what, Card::getName);
+    }
+
+    /** The names of the gorge dig pick consumed at this step, when they are
+     * exactly the offered cards' names (as a multiset), else null. The seat is
+     * not compared: Forge asks the cards' OWNER's controller to order a pile
+     * (GameActionUtil.orderCardsByTheirOwners), while gorge's pick is the
+     * chooser's, and fateseal's cards are the opponent's. A pick is the order of
+     * one move only, so it is used up here. */
+    <T> List<String> takeDigPick(Collection<T> cards, Function<T, String> nameOf) {
+        if (digPickNames == null || digPickStep != stepIdx) {
+            return null;
+        }
+        List<String> want = new ArrayList<>();
+        for (T c : cards) {
+            want.add(nameOf.apply(c));
+        }
+        List<String> have = new ArrayList<>(digPickNames);
+        java.util.Collections.sort(want);
+        java.util.Collections.sort(have);
+        if (!want.equals(have)) {
+            return null;
+        }
+        List<String> picks = digPickNames;
+        digPickNames = null;
+        return picks;
     }
 
     /** The queue-independent half of {@link #orderCards}: the picked names in
@@ -1924,9 +1975,13 @@ public final class StepMachine {
             miss("order", what);
             return null;
         }
+        return orderByNames(cards, d.picks, what, nameOf);
+    }
+
+    private <T> List<T> orderByNames(Collection<T> cards, List<String> picks, String what, Function<T, String> nameOf) {
         List<T> left = new ArrayList<>(cards);
         List<T> ordered = new ArrayList<>();
-        for (String pick : d.picks) {
+        for (String pick : picks) {
             for (int i = 0; i < left.size(); i++) {
                 if (pick.equals(nameOf.apply(left.get(i)))) {
                     ordered.add(left.remove(i));
@@ -1935,10 +1990,10 @@ public final class StepMachine {
             }
         }
         if (!left.isEmpty()) {
-            miss("order", what + ": gorge order " + d.picks + " does not name every card");
+            miss("order", what + ": gorge order " + picks + " does not name every card");
             return null;
         }
-        note("order step " + stepIdx + ": " + what + " " + d.picks);
+        note("order step " + stepIdx + ": " + what + " " + picks);
         return ordered;
     }
 
