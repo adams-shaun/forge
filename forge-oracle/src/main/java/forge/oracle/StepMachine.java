@@ -1901,6 +1901,28 @@ public final class StepMachine {
         return null;
     }
 
+    /** Maps an already-taken gorge decision's refs onto Forge's options (by
+     * ref, else a same-named copy for an unbound ref); null after a miss. */
+    <T extends GameEntity> List<T> pickFrom(Decision d, List<T> opts, int min, int max, String what) {
+        List<T> out = new ArrayList<>();
+        Set<T> used = new HashSet<>();
+        for (String ref : d.refs()) {
+            T o = matchRef(ref, opts, used);
+            if (o == null) {
+                miss(what, "gorge pick " + ref + " is not among Forge's " + opts.size() + " options");
+                return null;
+            }
+            used.add(o);
+            out.add(o);
+        }
+        if (out.size() < min || out.size() > max) {
+            miss(what, "gorge picked " + out.size() + ", Forge wants " + min + ".." + max);
+            return null;
+        }
+        note("pick step " + stepIdx + " " + what + ": " + d.refs());
+        return out;
+    }
+
     /** Consumes gorge's one-option pick of the lone forced entity Forge asks
      * about (ChoosePlayer over the one opponent, a ChooseEach$ category with
      * one candidate). Only a pick whose single ref IS this entity qualifies:
@@ -2221,11 +2243,24 @@ public final class StepMachine {
                 .replaceAll("[^a-z0-9~]", "");
     }
 
+    /** gorge's label (after the "Host: " prefix) of the Evoke sacrifice trigger. */
+    private static final String EVOKE_SACRIFICE_LABEL = "sacrifice it (evoked)";
+    /** A role-bound keyword-trigger label outscores every text-prefix match. */
+    private static final int KEYWORD_LABEL_SCORE = 1000;
+
     private static int triggerScore(String label, SpellAbility sa) {
         String host = sa.getHostCard().getName();
         String text = label;
         if (text.startsWith(host + ": ")) {
             text = text.substring(host.length() + 2);
+        }
+        // gorge's synthetic keyword triggers carry a fixed label that no Forge trigger text starts with
+        // (engine/rules/trigger_queue.go, the Evoke arm: name + ": sacrifice it (evoked)", CR 702.74a). Bind it
+        // by role: it names the host's Forge Evoke trigger (keyword Evoke) and no other trigger.
+        if (text.equals(EVOKE_SACRIFICE_LABEL)) {
+            boolean evoke = sa.getTrigger() != null && sa.getTrigger().getKeyword() != null
+                    && sa.getTrigger().getKeyword().getKeyword() == Keyword.EVOKE;
+            return evoke ? KEYWORD_LABEL_SCORE : 0;
         }
         String want = norm(text, host);
         int best = 0;
