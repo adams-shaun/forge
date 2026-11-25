@@ -478,8 +478,55 @@ public class ScriptedController extends PlayerControllerAi {
             m.note("zero-candidate confirm step " + m.step() + ": no (" + message + ")");
             return false;
         }
+        if (mode == null && emptyOptionalAnimateConfirm(sa)) {
+            m.note("empty animate confirm step " + m.step() + ": no (" + message + ")");
+            return false;
+        }
         Boolean b = m.yesNo(seat, "confirm " + mode + ": " + message);
         return b != null ? b : super.confirmAction(sa, mode, message, options, cardToShow, params);
+    }
+
+    /** Whether this is an Optional$ Animate gate with nothing to animate, which
+     * gorge never poses: Sita Varma, Masked Racer's "you may have the base power
+     * and toughness of each other creature you control become ..." with no other
+     * creature is an election with no board effect either way (CR 608.2d), so
+     * gorge logs no ask, while AnimateEffect still asks "It has base power and
+     * toughness N/N until end of turn." Answering no changes nothing. It holds
+     * only when no yes/no decision is queued for the seat and the cards the
+     * effect would animate (the ones AnimateEffect.getCardsfromTargets finds:
+     * the targets of a targeting ability, else every Defined$ part, plus
+     * ThisDefinedAndTgts$) include none on the battlefield that is not phased
+     * out (the ones its loop would skip, CR 702.26e). A target spell, or any
+     * card still on the battlefield, keeps the strict miss. */
+    private boolean emptyOptionalAnimateConfirm(SpellAbility sa) {
+        if (sa == null || sa.getApi() != ApiType.Animate || !sa.hasParam("Optional")
+                || peek(DecisionQueue::isYesNo) != null) {
+            return false;
+        }
+        Card host = sa.getHostCard();
+        if (host == null) {
+            return false;
+        }
+        if (sa.getTargets().getTargetSpells().iterator().hasNext()) {
+            return false;
+        }
+        List<Card> affected = new ArrayList<>();
+        if (sa.hasParam("ThisDefinedAndTgts")) {
+            affected.addAll(AbilityUtils.getDefinedCards(host, sa.getParam("ThisDefinedAndTgts"), sa));
+            sa.getTargets().getTargetCards().forEach(affected::add);
+        } else if (sa.usesTargeting()) {
+            sa.getTargets().getTargetCards().forEach(affected::add);
+        } else {
+            for (String d : sa.getParamOrDefault("Defined", "Self").split(" & ")) {
+                affected.addAll(AbilityUtils.getDefinedCards(host, d, sa));
+            }
+        }
+        for (Card c : affected) {
+            if (c.isInZone(ZoneType.Battlefield) && !c.isPhasedOut()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Whether this is an Optional$ hidden-origin ChangeZone/ChangeZoneAll gate
