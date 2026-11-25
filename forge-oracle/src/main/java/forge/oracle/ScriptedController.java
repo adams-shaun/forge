@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 
 import org.apache.commons.lang3.tuple.ImmutablePair;
@@ -87,11 +88,27 @@ public class ScriptedController extends PlayerControllerAi {
     /** Guards {@link #payFromOwnSources} against a mana ability that itself
      * has a mana cost (no basic land does; a chain would re-enter). */
     private boolean payingOwnSources;
-    /** True while payCostToPreventEffect pays on gorge's unless_pay answer: that one
-     * answer IS the payer's choice (CR 118.12), so the engine's per-part "do you want
-     * to pay" confirm inside payCostDuringAbilityResolve (energy, counters, discard,
-     * exile, shards, ...) must not look for a second decision. */
+    /** True while payCostToPreventEffect pays on gorge's answer (an unless_pay, echo
+     * or cumulative-upkeep election): that one answer IS the payer's choice (CR 118.12),
+     * so the engine's per-part "do you want to pay" confirm inside
+     * payCostDuringAbilityResolve (energy, counters, discard, exile, shards, ...) must
+     * not look for a second decision. */
     private boolean payingUnlessCost;
+
+    /** gorge's echo and cumulative-upkeep pay-or-sacrifice answers: each is ONE
+     * KChoose whose chosen option kind is the pick kind (engine/rules/echo.go,
+     * engine/rules/cumulative.go; CR 702.35a / 702.46a). Forge poses the same
+     * election from the keyword's upkeep trigger (DB$ Sacrifice | Echo$ /
+     * CumulativeUpkeep$) through SacrificeEffect's payCostToPreventEffect, so
+     * the answer is taken here and matched by pick kind, never by its label. */
+    private static final Set<String> ECHO_CUMULATIVE_ANSWERS = Set.of(
+            "echo_pay", "echo_pay_manual", "echo_sac",
+            "cumulative_pay", "cumulative_pay_manual", "cumulative_sac");
+
+    private static boolean isEchoCumulativeAnswer(Decision d) {
+        return d.picks.size() == 1 && d.pickKinds.size() == 1
+                && ECHO_CUMULATIVE_ANSWERS.contains(d.pickKinds.get(0));
+    }
 
     /** The in-flight ChangeZoneFromAltSource search (OriginAlternative$):
      * gorge posed ONE zone election where Forge asks an initial "search the
@@ -796,6 +813,30 @@ public class ScriptedController extends PlayerControllerAi {
                 }
             }
             m.note("unless-pay step " + m.step() + ": " + d.picks.get(0) + (pay ? " paid=" + paid : ""));
+            return paid;
+        }
+        // Echo and cumulative upkeep reach this same entry point: Forge builds
+        // both keywords as an upkeep trigger whose DB$ Sacrifice asks
+        // payCostToPreventEffect for Echo$/CumulativeUpkeep$ (CardFactoryUtil,
+        // SacrificeEffect). The pick kind is the answer: *_sac declines and
+        // lets Forge's own sacrifice happen; *_pay* pays through the engine's
+        // resolve-time payment, whose cost choose then consumes the following
+        // action pick (echo_action_pick / cumulative_action_sac / discard)
+        // from ScriptedCostDecision and the sacrifice/discard overrides.
+        Decision upkeep = take(ScriptedController::isEchoCumulativeAnswer);
+        if (upkeep != null) {
+            boolean pay = !upkeep.pickKinds.get(0).endsWith("_sac");
+            boolean paid = false;
+            if (pay && forge.ai.ComputerUtilCost.canPayCost(cost, sa, player, true)) {
+                payingUnlessCost = true;
+                try {
+                    paid = PlaySpellAbility.payCostDuringAbilityResolve(this, player, cost, sa, null);
+                } finally {
+                    payingUnlessCost = false;
+                }
+            }
+            m.note("echo/cumulative upkeep step " + m.step() + ": " + upkeep.picks.get(0)
+                    + (pay ? " paid=" + paid : ""));
             return paid;
         }
         if (m.step() < 0) {
