@@ -311,6 +311,16 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public List<AbilitySub> chooseModeForAbility(SpellAbility sa, List<AbilitySub> possible, int min, int num, boolean allowRepeat) {
+        if (num == 0) {
+            // CR 700.2/603.3c: "choose up to zero modes" has exactly one legal
+            // answer, none, and a modal ability with no mode chosen is removed
+            // from the stack. gorge poses no KModes decision for it (charm.go
+            // returns before the ask when max < 1), so do not consume a mode
+            // decision that is queued for a later ask.
+            m.note("modes step " + m.step() + ": none (0 modes possible"
+                    + (m.hasMode(seat) ? "; queued mode answer left for the next ask" : "") + ")");
+            return new ArrayList<>();
+        }
         List<AbilitySub> picked = m.chooseModes(seat, sa, possible, min, num, allowRepeat);
         if (picked != null) {
             return picked;

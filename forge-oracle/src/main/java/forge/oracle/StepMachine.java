@@ -299,6 +299,17 @@ public final class StepMachine {
         return null;
     }
 
+    /** Whether an unconsumed mode decision answers this seat now. Peeks, so a
+     * zero-mode ask can leave it for the ask that can use it. */
+    boolean hasMode(int seat) {
+        for (int st : decisionSteps()) {
+            if (dq.peek(st, x -> x.seat == seat && DecisionQueue.isMode(x)) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Consumes an empty object-choice answer only when it is the seat's next
      * decision at this step. A non-empty pick there belongs to the ask that
      * follows it (Dawnbreak Reclaimer's empty graveyard card ask, then
