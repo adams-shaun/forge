@@ -56,6 +56,11 @@ import forge.item.PaperToken;
  *     printed R:Event$ Moved body), exactly as gorge's placement re-runs them.
  *     A tap an entry replacement applies is undone and the scenario's tapped
  *     field re-states it.</li>
+ * <li>A Room placed by setup enters with neither unlocked designation: it is
+ *     not cast as either door (CR 709.5d), so its name is the empty string,
+ *     as gorge's fieldName and the XMage driver place it. The scenario name
+ *     only binds the card; it does not unlock the door it names. An explicit
+ *     unlock is the CR 709.5e special action, which no scenario step drives.</li>
  * <li>Then, per placement as gorge emits them: back face, tapped, setup
  *     counters (through the counter table, triggers live), speed, life.</li>
  * <li>Setup {@code tokens} (forge-gui res/tokenscripts stems) are minted at the
@@ -208,7 +213,6 @@ final class SetupBuilder {
             } else {
                 c = putOntoBattlefield(m.game, p, c, back);
             }
-            unlockNamedDoor(m.game, p, c, n);
             if (containsName(tapped, n)) {
                 c.setTapped(true);
             }
@@ -625,29 +629,6 @@ final class SetupBuilder {
         }
         moved.setTapped(false);
         return moved;
-    }
-
-    /** A Room named by one door's name stands with that door unlocked, as
-     * gorge's setup places it (name and colour of the door). The unlock
-     * triggers are held off: setup fires no entry-like triggers. */
-    static void unlockNamedDoor(Game game, Player p, Card c, String name) {
-        if (!c.getType().hasSubtype("Room")) {
-            return;
-        }
-        for (CardStateName sn : new CardStateName[] {CardStateName.LeftSplit, CardStateName.RightSplit}) {
-            if (c.hasState(sn) && name.equalsIgnoreCase(c.getState(sn).getName())) {
-                TriggerHandler th = game.getTriggerHandler();
-                th.suppressMode(TriggerType.UnlockDoor);
-                th.suppressMode(TriggerType.FullyUnlock);
-                try {
-                    c.unlockRoom(p, sn);
-                } finally {
-                    th.clearSuppression(TriggerType.UnlockDoor);
-                    th.clearSuppression(TriggerType.FullyUnlock);
-                }
-                return;
-            }
-        }
     }
 
     /** gorge's setup FlipFace: the card stands on its back face before the
