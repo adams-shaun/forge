@@ -1262,7 +1262,9 @@ public final class StepMachine {
      *     else the step's "Add X" mana pick when several;</li>
      * <li>keyword: a keyword-derived line (Keyword$ K: cycling, equip, ...)
      *     against the SAs Forge derived from keyword K with the same API,
-     *     then the same cost;</li>
+     *     then the same cost; when none shares the API (gorge's Encore line
+     *     against Forge's CopyPermanent), the SAs derived from K with the
+     *     same cost;</li>
      * <li>api+cost: same API and the same cost, parsed by Forge's own Cost.</li>
      * </ol>
      * Anything else is a harness row listing the candidates. */
@@ -1331,7 +1333,17 @@ public final class StepMachine {
                     byKw.add(sa);
                 }
             }
-            if (byKw.size() > 1) {
+            if (byKw.isEmpty()) {
+                // gorge names a keyword expansion by its own API (Encore, CR 702.141a) where Forge derives
+                // the same ability from the keyword under another (CopyPermanent): the keyword and the
+                // same cost identify it, whatever the API.
+                for (SpellAbility sa : all) {
+                    if (sa.getKeyword() != null && sa.getKeyword().getKeyword() != null
+                            && sa.getKeyword().getKeyword().toString().equalsIgnoreCase(kw) && costKey(sa).equals(cost)) {
+                        byKw.add(sa);
+                    }
+                }
+            } else if (byKw.size() > 1) {
                 byKw.removeIf(sa -> !costKey(sa).equals(cost));
             }
             if (!byKw.isEmpty()) {
