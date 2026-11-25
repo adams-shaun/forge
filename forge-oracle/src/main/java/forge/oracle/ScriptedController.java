@@ -1044,24 +1044,37 @@ public class ScriptedController extends PlayerControllerAi {
         return toPay.isPaid();
     }
 
-    /** Pays each Phyrexian pip gorge paid with 2 life (CR 107.4f, 118.3b): its
-     * pay_life pick of this step, one pick per pip. Forge's AI does the same in
-     * ComputerUtilMana.payManaCost (payPhyrexian, then payLife(2)), but the
-     * scripted controller pays only mana, so the pip stayed unpaid and the
-     * cast was refused. A pip gorge recorded no pay_life pick for stays a mana
-     * pip, so a mana payment stays a mana payment. The pick is not taken when
-     * the player cannot pay the life, so a refusal is Forge's own. */
+    /** Pays each pip gorge paid with 2 life: its pay_life pick of this step, one
+     * pick per pip. A Phyrexian pip (CR 107.4f, 118.3b) is paid with payPhyrexian;
+     * a black pip is paid the same way while the player has K'rrik's
+     * "PayLifeInsteadOf:B" (CR 601.2h, 118.9: "for each {B} in a cost, you may pay
+     * 2 life rather than pay that mana"), which drops one black shard. Forge's AI
+     * (ComputerUtilMana.payManaCost) and the GUI (InputPayManaOfCostPayment) both
+     * pay that way, but the scripted controller paid only mana, so the pip stayed
+     * unpaid and the cast was refused. A pip gorge recorded no pay_life pick for
+     * stays a mana pip, so a mana payment stays a mana payment. The pick is not
+     * taken when the player cannot pay the life, so a refusal is Forge's own. */
     private void payPhyrexianWithLife(ManaCostBeingPaid toPay, SpellAbility ability) {
-        while (toPay.containsPhyrexianMana() && player.canPayLife(2, false, ability)) {
+        while (player.canPayLife(2, false, ability)) {
+            boolean phyrexian = toPay.containsPhyrexianMana();
+            boolean blackForLife = !phyrexian && player.hasKeyword("PayLifeInsteadOf:B")
+                    && toPay.hasAnyKind(ManaAtom.BLACK);
+            if (!phyrexian && !blackForLife) {
+                return;
+            }
             Decision d = take(x -> x.pickKinds.contains("pay_life"));
             if (d == null) {
                 return;
             }
-            toPay.payPhyrexian();
-            ability.setSpendPhyrexianMana(true);
+            if (phyrexian) {
+                toPay.payPhyrexian();
+                ability.setSpendPhyrexianMana(true);
+            } else {
+                toPay.decreaseShard(ManaCostShard.BLACK, 1);
+            }
             player.payLife(2, ability, false);
-            m.note("pay phyrexian with 2 life step " + m.step() + " for " + ability.getHostCard().getName()
-                    + ": life " + player.getLife());
+            m.note("pay " + (phyrexian ? "phyrexian" : "black") + " with 2 life step " + m.step() + " for "
+                    + ability.getHostCard().getName() + ": life " + player.getLife());
         }
     }
 
