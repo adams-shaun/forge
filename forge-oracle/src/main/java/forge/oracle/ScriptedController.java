@@ -1034,6 +1034,18 @@ public class ScriptedController extends PlayerControllerAi {
                 return answer;
             }
         }
+        if (kindOfChoice == BinaryChoiceType.UntapOrLeaveTapped) {
+            // A cut scenario's pending optional-untap ask logs no decision:
+            // gorge stopped with the choice pending, its permanent still
+            // tapped (CR 502.3). Answer leave-tapped and take the driving
+            // step's checkpoint here -- gorge snapshots at the pending choice
+            // (step "untap"), not at the next priority the answer reaches.
+            int step = m.step();
+            boolean took = m.completePendingAtUntapAsk();
+            m.note("binary step " + step + " (" + kindOfChoice + "): unbound optional untap -> leave tapped"
+                    + (took ? " (checkpoint taken at the ask)" : ""));
+            return false;
+        }
         m.miss("binary", question);
         return super.chooseBinary(sa, question, kindOfChoice, defaultChoice);
     }
@@ -1051,6 +1063,14 @@ public class ScriptedController extends PlayerControllerAi {
             return take(x -> x.kind.equals("choose_n")
                     && (x.resume.equals("taporuntap") || x.resume.equals("taporuntapall")
                             || x.pickKinds.contains("tap") || x.pickKinds.contains("untap")));
+        case UntapOrLeaveTapped:
+            // CR 502.3's optional untap (Whip Vine, ...): gorge's untap
+            // election, choose_n with pick kinds untap / keep_tapped and no
+            // resume (the ask pends outside a priority window). An empty
+            // resume keeps it away from a tap-or-untap effect's decision,
+            // which logs resume taporuntap with the same untap kind.
+            return take(x -> x.kind.equals("choose_n") && x.resume.isEmpty()
+                    && (x.pickKinds.contains("untap") || x.pickKinds.contains("keep_tapped")));
         case LeftOrRight:
             // ChooseDirectionEffect: true means Left. gorge's pick kind is
             // "direction", the label "left" or "right".
@@ -1092,6 +1112,13 @@ public class ScriptedController extends PlayerControllerAi {
             boolean tap = d.picks.isEmpty() || d.pickKinds.contains("tap");
             m.note("binary step " + m.step() + " (" + kind + "): " + (tap ? "tap" : "untap") + " " + d.picks);
             return tap;
+        }
+        case UntapOrLeaveTapped: {
+            // gorge's election contract (rules/turn.go): option 0 untaps,
+            // option 1 keeps tapped; an empty answer reads as untap.
+            boolean untap = d.picks.isEmpty() || d.pickKinds.contains("untap");
+            m.note("binary step " + m.step() + " (" + kind + "): " + (untap ? "untap" : "leave tapped") + " " + d.picks);
+            return untap;
         }
         case LeftOrRight: {
             boolean left = d.picks.get(0).trim().equalsIgnoreCase("left");
