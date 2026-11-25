@@ -1248,6 +1248,13 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CardCollectionView chooseCardsForEffect(CardCollectionView sourceList, SpellAbility sa, String title, int min, int max, boolean isOptional, Map<String, Object> params) {
+        if (m.loneTwoPilesSplit(seat, sa, sourceList.size(), isOptional ? 0 : min, max)) {
+            // CR 700.3: one card splits one way (the card and an empty pile), so
+            // gorge poses no split and logs none. The card is pile 1 (gorge's
+            // pile A), which chooseCardsPile's twopiles_pick then resolves.
+            m.note("two piles step " + m.stepIdx + ": one card, no split pick; the card is pile 1");
+            return new CardCollection(sourceList);
+        }
         List<Card> picked = m.pickObjects(seat, sourceList, isOptional ? 0 : min, max, "card (" + title + ")");
         return picked != null ? new CardCollection(picked) : super.chooseCardsForEffect(sourceList, sa, title, min, max, isOptional, params);
     }
