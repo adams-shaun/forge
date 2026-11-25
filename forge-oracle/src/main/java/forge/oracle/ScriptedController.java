@@ -662,7 +662,24 @@ public class ScriptedController extends PlayerControllerAi {
             m.note("attach-confirm step " + m.step() + ": yes " + attachment + " (chosen by the entity pick)");
             return true;
         }
-        Decision d = take(x -> x.kind.equals("choose_n") && (x.resume.startsWith("attach") || attachNames(x, attachment)));
+        // Gorge's decisions bind in log order, so this confirm answers from the
+        // FIRST attach decision of the step (an earlier effect's attach_subset /
+        // attach_choice must not be skipped for a later effect's yes/no). A
+        // per-attachment yes/no (attach_optional: Bruna, Light of Alabaster's
+        // RepeatEach over the Auras that can enchant it, CR 303.4) carries no
+        // card ref; as the head decision it is the answer to this very confirm,
+        // unless a pick already consumed for this host and step is still
+        // answering this effect's confirms.
+        Decision head = peek(x -> x.kind.equals("choose_n") && (x.resume.startsWith("attach") || attachNames(x, attachment)));
+        boolean headOptional = head != null && head.resume.equals("attach_optional") && DecisionQueue.isYesNo(head);
+        boolean pickLive = attachStep == m.step() && attachHost == sa.getHostCard();
+        if (headOptional && !pickLive) {
+            take(x -> x == head);
+            boolean yes = DecisionQueue.yes(head);
+            m.note("attach-confirm step " + m.step() + ": " + (yes ? "yes " : "no ") + attachment + " (attach_optional)");
+            return yes;
+        }
+        Decision d = headOptional ? null : take(x -> x.kind.equals("choose_n") && (x.resume.startsWith("attach") || attachNames(x, attachment)));
         if (d != null) {
             attachStep = m.step();
             attachHost = sa.getHostCard();
