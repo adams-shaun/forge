@@ -1939,12 +1939,24 @@ public class ScriptedController extends PlayerControllerAi {
         hiddenSearchFound.put(sa, (was != null && was) || found);
     }
 
+    /** A forced Hand -> Library put-back (every eligible card is moved, as with
+     * Sawtooth Loon's empty hand): gorge poses only its CR 401.4 placement
+     * order, which answers Forge's per-card selection asks (see
+     * StepMachine.seedHandLibraryPlacement). Any other ask leaves the queue
+     * alone. */
+    private void seedHandLibraryPlacement(ZoneType destination, List<ZoneType> origin, CardCollection fetchList) {
+        if (destination == ZoneType.Library && origin != null && origin.contains(ZoneType.Hand)) {
+            m.seedHandLibraryPlacement(seat, fetchList);
+        }
+    }
+
     @Override
     public Card chooseSingleCardForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa, CardCollection fetchList, DelayedReveal delayedReveal, String selectPrompt, boolean isOptional, Player decider) {
         noteHiddenSearch(sa, origin, fetchList);
         if (fetchList.isEmpty()) {
             return null;
         }
+        seedHandLibraryPlacement(destination, origin, fetchList);
         List<Card> picked = m.pickObjects(seat, fetchList, isOptional ? 0 : 1, 1, "zone change");
         if (picked != null) {
             return picked.isEmpty() ? null : picked.get(0);
@@ -1955,6 +1967,7 @@ public class ScriptedController extends PlayerControllerAi {
     @Override
     public List<Card> chooseCardsForZoneChange(ZoneType destination, List<ZoneType> origin, SpellAbility sa, CardCollection fetchList, int min, int max, DelayedReveal delayedReveal, String selectPrompt, Player decider) {
         noteHiddenSearch(sa, origin, fetchList);
+        seedHandLibraryPlacement(destination, origin, fetchList);
         List<Card> picked = m.pickObjects(seat, fetchList, min, max, "zone change");
         return picked != null ? picked : super.chooseCardsForZoneChange(destination, origin, sa, fetchList, min, max, delayedReveal, selectPrompt, decider);
     }
