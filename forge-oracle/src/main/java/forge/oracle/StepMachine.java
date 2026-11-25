@@ -2506,7 +2506,10 @@ public final class StepMachine {
     /** gorge logs one counter-kind pick per counter removed: a choose_n with
      * pick kind "counter" and resume "counter_kind". Forge asks remove-any-type
      * as chooseCounterType (the type) then chooseNumber (the amount), so the
-     * amount is the run of this step's picks of that type; consume them. */
+     * amount is the run of this step's picks of that type; consume them. An
+     * UpTo removal's "remove_counter_done" ("Done") belongs to the NEXT type
+     * ask, so leave it queued here; takeCounterKind consumes it and the amount
+     * ask for the type it returns then has no picks and answers 0. */
     int takeCounterPicks(int seat, CounterType ct, int max) {
         int n = 0;
         while (n < max) {
@@ -2535,7 +2538,14 @@ public final class StepMachine {
      * offered type stays a null, so the caller's miss still fires. */
     CounterType takeCounterKind(int seat, List<CounterType> options, boolean leaveForAmount) {
         Predicate<Decision> match = x -> {
-            if (!x.kind.equals("choose_n") || x.picks.size() != 1 || !isCounterKind(x)) {
+            if (!x.kind.equals("choose_n") || x.picks.size() != 1) {
+                return false;
+            }
+            if (isCounterDonePick(x)) {
+                // Only a remove-any-type ask can see an early-stop Done.
+                return leaveForAmount;
+            }
+            if (!isCounterKind(x)) {
                 return false;
             }
             for (CounterType ct : options) {
@@ -2545,9 +2555,21 @@ public final class StepMachine {
             }
             return false;
         };
-        Decision d = leaveForAmount ? peek(seat, match) : take(seat, match);
+        Decision d = peek(seat, match);
         if (d == null) {
             return null;
+        }
+        if (isCounterDonePick(d)) {
+            // Forge's removeAnyType offers no Done type: consume the Done and
+            // answer with a legal offered type. Its chooseNumber then finds no
+            // counter pick and answers 0 (min is 0 under UpTo), which is how
+            // removeAnyType stops early.
+            take(seat, x -> x == d);
+            note("counter kind step " + stepIdx + ": Done");
+            return options.isEmpty() ? null : options.get(0);
+        }
+        if (!leaveForAmount) {
+            take(seat, x -> x == d);
         }
         for (CounterType ct : options) {
             if (isCounterLabel(d.picks.get(0), ct)) {
@@ -2583,6 +2605,14 @@ public final class StepMachine {
 
     private static boolean isCounterKind(Decision d) {
         return d.pickKinds.contains("counter") || d.resume.equals("counter_kind");
+    }
+
+    /** The "Done" option of an up-to remove-any-type election (gorge's
+     * remove_counter_done). It names no Forge CounterType, so it is read by
+     * its pick kind, not by a label list. */
+    private static boolean isCounterDonePick(Decision d) {
+        return d.kind.equals("choose_n") && d.picks.size() == 1
+                && d.pickKinds.contains("remove_counter_done");
     }
 
     private static boolean isCounterLabel(String label, CounterType ct) {

@@ -1678,15 +1678,24 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public CounterType chooseCounterType(List<CounterType> options, SpellAbility sa, String prompt, Map<String, Object> params) {
+        // A remove-any-type ask is followed by its per-type chooseNumber, and
+        // gorge logs one kind pick per counter removed; that amount ask owns
+        // the picks, so leave a type pick queued (see StepMachine.takeCounterKind).
+        // Do this before the lone-option shortcut: under UpTo, gorge offers
+        // Done even when only one kind is present, and the Done must be
+        // consumed by the kind ask, not left for an amount ask that never comes.
+        boolean leaveForAmount = sa != null && sa.getApi() == ApiType.RemoveCounter;
+        if (leaveForAmount) {
+            CounterType ct = m.takeCounterKind(seat, options, true);
+            if (ct != null) {
+                return ct;
+            }
+        }
         if (options.size() == 1) {
             // A lone legal kind is forced; the number ask consumes the picks.
             return options.get(0);
         }
-        // A remove-any-type ask is followed by its per-type chooseNumber, and
-        // gorge logs one kind pick per counter removed; that amount ask owns
-        // the picks, so leave this one queued (see StepMachine.takeCounterKind).
-        boolean leaveForAmount = sa != null && sa.getApi() == ApiType.RemoveCounter;
-        CounterType ct = m.takeCounterKind(seat, options, leaveForAmount);
+        CounterType ct = leaveForAmount ? null : m.takeCounterKind(seat, options, false);
         if (ct != null) {
             return ct;
         }
