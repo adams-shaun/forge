@@ -1051,6 +1051,17 @@ public final class StepMachine {
             case "omen_alt": want = sa -> sa.isSpell() && sa.isOmen(); break;
             case "modal_spell": want = sa -> sa.isSpell() && sa.getCardStateName() == forge.card.CardStateName.Backside; break;
             case "warped": want = sa -> sa.isSpell() && sa.isWarp(); break;
+            // Morph, Megamorph and Disguise (CR 702.37a, 702.168a, 702.169a)
+            // are face-down casts for {3}: gorge's cast_mode "morphed",
+            // "megamorphed" and "disguised" each pay the same {3} (the
+            // printed keyword cost is only the later turn-face-up), so all
+            // three take the one face-down spell Forge builds for the card
+            // (CardFactoryUtil.abilityCastFaceDown, a Spell with
+            // setCastFaceDown(true) and Cost {3}; Megamorph builds it with
+            // the same "Morph" key, and a card carrying the whole family
+            // carries one per printed keyword, {3} each).
+            case "morphed": case "megamorphed": case "disguised":
+                want = sa -> sa.isSpell() && sa.isCastFaceDown(); break;
             // StaticAbilityAlternativeCost copies a spell with the static's
             // Cost in place of the printed mana cost (Submerge's "cast
             // without paying its mana cost", Leyline of Mutation's alternative
