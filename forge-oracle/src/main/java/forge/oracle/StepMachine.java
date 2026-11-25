@@ -2522,9 +2522,19 @@ public final class StepMachine {
         return n;
     }
 
-    /** The next counter-kind pick naming one of Forge's offered types. */
-    CounterType takeCounterKind(int seat, List<CounterType> options) {
-        Decision d = take(seat, x -> {
+    /** The next counter-kind pick naming one of Forge's offered types.
+     *
+     * remove-any-type (Forge's CountersRemoveEffect.removeAnyType) asks
+     * chooseCounterType and then chooseNumber per type, and gorge logs one
+     * counter-kind pick per counter removed. The chooseNumber ask owns that
+     * whole run, so leaveForAmount peeks the type's pick instead of taking it:
+     * if takeCounterKind took the first pick, takeCounterPicks would count only
+     * the remaining ones and Forge would remove one counter too few from a
+     * mixed-kind permanent. Every other counter-kind ask (a put or move) has
+     * no amount run behind it and consumes its one pick. No pick naming an
+     * offered type stays a null, so the caller's miss still fires. */
+    CounterType takeCounterKind(int seat, List<CounterType> options, boolean leaveForAmount) {
+        Predicate<Decision> match = x -> {
             if (!x.kind.equals("choose_n") || x.picks.size() != 1 || !isCounterKind(x)) {
                 return false;
             }
@@ -2534,7 +2544,8 @@ public final class StepMachine {
                 }
             }
             return false;
-        });
+        };
+        Decision d = leaveForAmount ? peek(seat, match) : take(seat, match);
         if (d == null) {
             return null;
         }

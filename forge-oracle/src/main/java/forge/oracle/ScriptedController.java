@@ -1682,7 +1682,11 @@ public class ScriptedController extends PlayerControllerAi {
             // A lone legal kind is forced; the number ask consumes the picks.
             return options.get(0);
         }
-        CounterType ct = m.takeCounterKind(seat, options);
+        // A remove-any-type ask is followed by its per-type chooseNumber, and
+        // gorge logs one kind pick per counter removed; that amount ask owns
+        // the picks, so leave this one queued (see StepMachine.takeCounterKind).
+        boolean leaveForAmount = sa != null && sa.getApi() == ApiType.RemoveCounter;
+        CounterType ct = m.takeCounterKind(seat, options, leaveForAmount);
         if (ct != null) {
             return ct;
         }
