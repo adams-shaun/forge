@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package forge.oracle;
 
+import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
@@ -16,6 +17,7 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -116,6 +118,17 @@ public class ChangeTargetsConfirmTest {
         return change;
     }
 
+    private static int life(ResultRow row, int seat) {
+        JsonObject last = row.snapshots.get(row.snapshots.size() - 1);
+        for (JsonElement e : last.getAsJsonArray("players")) {
+            JsonObject p = e.getAsJsonObject();
+            if (p.get("seat").getAsInt() == seat) {
+                return p.get("life").getAsInt();
+            }
+        }
+        return -1;
+    }
+
     private static StrictMiss expectStrictMiss(ScriptedController c, SpellAbility sa, String message) {
         try {
             c.confirmAction(sa, null, message, null, sa.getTargets().getTargetSpells().iterator().next().getHostCard(), null);
@@ -135,6 +148,32 @@ public class ChangeTargetsConfirmTest {
         assertTrue(row.notes.stream().anyMatch(n -> n.startsWith("empty change targets confirm step ")
                         && n.contains("Reach Through Mists")),
                 "the empty ChangeTargets confirm is declined, notes: " + row.notes);
+    }
+
+    @Test
+    public void targetedSpellConsumesTheRetargetDecision() throws Exception {
+        ResultRow row = replay("redirect-targeted.jsonl");
+        assertNull(row.harness, "harness row: " + row.harness);
+        assertNull(row.strictMiss, "strict miss: " + row.strictMiss);
+        assertNull(row.leftover, "unconsumed gorge decision: " + row.leftover);
+        assertTrue(row.notes.stream().anyMatch(n -> n.startsWith("change targets confirm step 9: no")
+                        && n.contains("Shock")),
+                "the targeted subject's retarget decline is consumed, notes: " + row.notes);
+        assertEquals(life(row, 0), 18, "Shock kept its original target, so it still dealt 2 to p0");
+    }
+
+    @Test
+    public void targetedSpellAppliesTheRetargetPick() throws Exception {
+        ResultRow row = replay("redirect-targeted-change.jsonl");
+        assertNull(row.harness, "harness row: " + row.harness);
+        assertNull(row.strictMiss, "strict miss: " + row.strictMiss);
+        assertNull(row.leftover, "unconsumed gorge decision: " + row.leftover);
+        assertTrue(row.notes.stream().anyMatch(n -> n.startsWith("change targets confirm step 9: yes")
+                        && n.contains("p1")),
+                "the targeted subject's retarget pick answers the confirm yes, notes: " + row.notes);
+        assertTrue(row.notes.contains("retarget step 9: [p1]"), "the pick is applied, notes: " + row.notes);
+        assertEquals(life(row, 0), 20, "Shock left its old target p0");
+        assertEquals(life(row, 1), 18, "Shock dealt 2 to the new target p1");
     }
 
     @Test

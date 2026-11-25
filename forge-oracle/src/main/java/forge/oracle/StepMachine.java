@@ -2651,6 +2651,53 @@ public final class StepMachine {
         return sa.getTargets();
     }
 
+    /** Apply gorge's ChangeTargets redirect pick to the declaration Forge is
+     * retargeting (CR 115.7): the pick names the new target(s), and the old
+     * target(s) keep any slot no pick reaches, exactly as effChangeTargets'
+     * retargeted does. An empty pick keeps the old targets (the confirm already
+     * declined it) and is consumed. Null means no retarget pick is queued. */
+    forge.game.spellability.TargetChoices retargetTargets(int seat, SpellAbility ability, Predicate<GameObject> filter) {
+        SpellAbility sa = ability.isWrapper() ? ((forge.game.trigger.WrappedAbility) ability).getWrappedAbility() : ability;
+        if (!sa.usesTargeting()) {
+            return null;
+        }
+        Decision d = take(seat, DecisionQueue::isRetarget);
+        if (d == null || d.picks.isEmpty()) {
+            return null;
+        }
+        forge.game.spellability.TargetChoices old = sa.getTargets();
+        if (old == null) {
+            return null;
+        }
+        List<GameObject> picked = new ArrayList<>();
+        for (String ref : d.refs()) {
+            GameObject o = targetObject(ref);
+            if (o != null && (filter == null || filter.test(o)) && sa.canTarget(o)) {
+                picked.add(o);
+            }
+        }
+        if (picked.isEmpty()) {
+            miss("new targets", "gorge retarget " + d.refs() + " not legal for " + sa);
+            return null;
+        }
+        List<GameObject> out = new ArrayList<>(old);
+        List<GameObject> moved = new ArrayList<>();
+        for (GameObject o : picked) {
+            if (!old.contains(o)) {
+                moved.add(o);
+            }
+        }
+        for (int i = 0; i < out.size() && !moved.isEmpty(); i++) {
+            if (!picked.contains(out.get(i))) {
+                out.set(i, moved.remove(0));
+            }
+        }
+        sa.clearTargets();
+        out.forEach(sa.getTargets()::add);
+        note("retarget step " + stepIdx + ": " + d.picks);
+        return sa.getTargets();
+    }
+
     boolean hasSetupYesNo(int seat) {
         return dq.peek(-1, x -> x.seat == seat && DecisionQueue.isYesNo(x)) != null;
     }

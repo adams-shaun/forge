@@ -38,6 +38,10 @@ public final class DecisionQueue {
         public final int min;
         public final int max;
         public final int divided;
+        /** A ChangeTargets redirect pick (CR 115.7): a choose whose options are
+         * the legal NEW targets. It answers Forge's optional "change targets?"
+         * confirm and then the new-target pick; never a generic choice. */
+        public final boolean retarget;
         boolean consumed;
 
         Decision(JsonObject o) {
@@ -54,6 +58,7 @@ public final class DecisionQueue {
             min = intOf(o, "min", 0);
             max = intOf(o, "max", 0);
             divided = intOf(o, "divided", 0);
+            retarget = o.has("retarget") && o.get("retarget").getAsBoolean();
         }
 
         public boolean isConsumed() {
@@ -258,6 +263,13 @@ public final class DecisionQueue {
 
     /** A yes/no answer: a trigger_optional "yesno" or a choose whose single
      * pick is a yes/no label. */
+    /** A ChangeTargets redirect pick (marker from gorge's oracle_snapshot.go):
+     * a choose ask over the legal new targets, answered by the confirm and the
+     * new-target pick rather than by a generic choice. */
+    public static boolean isRetarget(Decision d) {
+        return d.retarget && d.kind.equals("choose_n") && d.resume.equals("choice");
+    }
+
     public static boolean isYesNo(Decision d) {
         if (isLookAck(d)) {
             return false;

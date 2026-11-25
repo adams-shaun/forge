@@ -269,6 +269,12 @@ public class ScriptedController extends PlayerControllerAi {
 
     @Override
     public TargetChoices chooseNewTargetsFor(SpellAbility ability, Predicate<GameObject> filter, boolean optional) {
+        // An Optional$ ChangeTargets redirect: gorge's retarget pick names the
+        // new target(s) and the confirm above already said yes.
+        TargetChoices retargeted = m.retargetTargets(seat, ability, filter);
+        if (retargeted != null) {
+            return retargeted;
+        }
         // A copy's "you may choose new targets": gorge logs the copy's
         // targets as a target ask with resume copy_targets.
         TargetChoices t = m.copyTargets(seat, ability, filter);
@@ -486,6 +492,12 @@ public class ScriptedController extends PlayerControllerAi {
             m.note("empty change targets confirm step " + m.step() + ": no (" + message + ")");
             return false;
         }
+        if (mode == null) {
+            Boolean retarget = retargetConfirm(sa, message);
+            if (retarget != null) {
+                return retarget;
+            }
+        }
         Boolean b = m.yesNo(seat, "confirm " + mode + ": " + message);
         return b != null ? b : super.confirmAction(sa, mode, message, options, cardToShow, params);
     }
@@ -549,29 +561,67 @@ public class ScriptedController extends PlayerControllerAi {
                 || peek(DecisionQueue::isYesNo) != null) {
             return false;
         }
-        Card host = sa.getHostCard();
-        if (host == null) {
-            return false;
-        }
+        List<SpellAbility> subjects = changeTargetSubjects(sa);
+        return !subjects.isEmpty() && !changeTargetChainHasTargets(subjects);
+    }
+
+    /** The subject spells ChangeTargetsEffect would walk: a targeting ability
+     * gives its target spells, otherwise its Defined$ spells (the same choice
+     * SpellAbilityEffect.getTargetSpells makes). */
+    private static List<SpellAbility> changeTargetSubjects(SpellAbility sa) {
         List<SpellAbility> subjects = new ArrayList<>();
-        TargetChoices targets = sa.getTargets();
+        TargetChoices targets = sa == null ? null : sa.getTargets();
         if (targets != null) {
             targets.getTargetSpells().forEach(subjects::add);
         }
-        if (subjects.isEmpty() && sa.hasParam("Defined")) {
-            subjects.addAll(AbilityUtils.getDefinedSpellAbilities(host, sa.getParam("Defined"), sa));
+        if (subjects.isEmpty() && sa != null && sa.getHostCard() != null && sa.hasParam("Defined")) {
+            subjects.addAll(AbilityUtils.getDefinedSpellAbilities(sa.getHostCard(), sa.getParam("Defined"), sa));
         }
-        if (subjects.isEmpty()) {
-            return false;
-        }
+        return subjects;
+    }
+
+    /** Whether any subject declaration (its root or a subability) still holds a
+     * target: the links ChangeTargetsEffect walks before it asks. */
+    private static boolean changeTargetChainHasTargets(List<SpellAbility> subjects) {
         for (SpellAbility subject : subjects) {
             for (SpellAbility link = subject; link != null; link = link.getSubAbility()) {
                 TargetChoices linkTargets = link.getTargets();
                 if (linkTargets != null && !linkTargets.isEmpty()) {
-                    return false;
+                    return true;
                 }
             }
         }
+        return false;
+    }
+
+    /** Answer Forge's optional ChangeTargets confirm from gorge's redirect pick
+     * (DecisionQueue.isRetarget) when the subject spell does hold a target. An
+     * empty pick is a recorded decline and is consumed here; a non-empty pick
+     * answers yes and is left for chooseNewTargetsFor to apply. Null means no
+     * retarget decision is queued, so the normal confirm path keeps the strict
+     * miss. ChangeSingleTarget$/RandomTarget$ ask a different question and are
+     * left alone. */
+    private Boolean retargetConfirm(SpellAbility sa, String message) {
+        if (sa == null || sa.getApi() != ApiType.ChangeTargets || !sa.hasParam("Optional")
+                || sa.hasParam("ChangeSingleTarget") || sa.hasParam("RandomTarget")
+                || peek(DecisionQueue::isYesNo) != null) {
+            return null;
+        }
+        List<SpellAbility> subjects = changeTargetSubjects(sa);
+        if (subjects.size() != 1 || !changeTargetChainHasTargets(subjects)) {
+            return null;
+        }
+        Decision d = peek(DecisionQueue::isRetarget);
+        if (d == null) {
+            return null;
+        }
+        if (d.picks.isEmpty()) {
+            take(DecisionQueue::isRetarget);
+            m.note("change targets confirm step " + m.step() + ": no (" + message + ")");
+            return false;
+        }
+        m.note("change targets confirm step " + m.step() + ": yes ("
+                + String.join(", ", d.picks) + ")");
         return true;
     }
 
