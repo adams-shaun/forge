@@ -102,4 +102,13 @@ public class UnmappedAsksJoinDirectionAttachTest {
         assertEquals(count(m, "attach-confirm step 10: no Spidersilk Net"), 1L, "notes: " + m.notes);
         assertEquals(count(m, "loose:"), 0L, "no AI-answered ask, notes: " + m.notes);
     }
+
+    /** Bruna, Light of Alabaster's per-Aura attach ask (gorge resume
+     * attach_optional, a bare yes with no card ref) answers Forge's confirm. */
+    @Test
+    public void brunaAttachOptionalYesAttaches() throws Exception {
+        StepMachine m = replay("attach-optional-yes.jsonl");
+        assertEquals(count(m, "attach-confirm step 10: yes Cowed by Wisdom"), 1L, "notes: " + m.notes);
+        assertEquals(count(m, "loose:"), 0L, "no AI-answered ask, notes: " + m.notes);
+    }
 }

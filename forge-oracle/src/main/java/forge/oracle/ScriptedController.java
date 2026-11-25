@@ -662,6 +662,15 @@ public class ScriptedController extends PlayerControllerAi {
             m.note("attach-confirm step " + m.step() + ": yes " + attachment + " (chosen by the entity pick)");
             return true;
         }
+        // A per-attachment yes/no (gorge's attach_optional: Bruna, Light of
+        // Alabaster's RepeatEach over the Auras that can enchant it, CR 303.4)
+        // carries no card ref; it is the answer to this very confirm.
+        Decision yn = take(x -> x.kind.equals("choose_n") && x.resume.equals("attach_optional") && DecisionQueue.isYesNo(x));
+        if (yn != null) {
+            boolean yes = DecisionQueue.yes(yn);
+            m.note("attach-confirm step " + m.step() + ": " + (yes ? "yes " : "no ") + attachment + " (attach_optional)");
+            return yes;
+        }
         Decision d = take(x -> x.kind.equals("choose_n") && (x.resume.startsWith("attach") || attachNames(x, attachment)));
         if (d != null) {
             attachStep = m.step();
