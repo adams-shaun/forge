@@ -86,6 +86,19 @@ public final class StepMachine {
     final JsonArray steps;
     final List<ArrayDeque<List<String>>> forcedShuffles = new ArrayList<>();
     final int targetTurn;
+    /** FORGE_ORACLE_AI_TIMEOUT_S: the AI's per-decision budget in seconds
+     * (Game.AI_TIMEOUT, Forge's default 5) for the decisions a loose replay
+     * leaves to the AI; unset or negative keeps Forge's default. */
+    static final int AI_TIMEOUT_S = aiTimeout(System.getenv("FORGE_ORACLE_AI_TIMEOUT_S"));
+
+    static int aiTimeout(String v) {
+        try {
+            return v == null || v.isEmpty() ? -1 : Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
     Game game;
     final Player[] seats;
     final List<JsonObject> snaps = new ArrayList<>();
@@ -191,6 +204,9 @@ public final class StepMachine {
         }
         Match match = new Match(rules, players, "oracle");
         game = new Game(players, rules, match);
+        if (AI_TIMEOUT_S >= 0) {
+            game.AI_TIMEOUT = AI_TIMEOUT_S;
+        }
         for (int i = 0; i < seats.length; i++) {
             seats[i] = game.getPlayers().get(i);
         }

@@ -22,6 +22,7 @@ import com.google.gson.GsonBuilder;
  *
  * <pre>
  *   ScenarioReplay &lt;in.jsonl&gt; &lt;out.jsonl&gt; [--res DIR] [--repeat N]
+ *   ScenarioReplay --serve SOCK IDLE_S MAX_ITEMS     (a warm worker: WarmServer)
  * </pre>
  *
  * One JVM, one result row per request line, in input order. It mirrors the
@@ -143,6 +144,13 @@ public final class ScenarioReplay {
     }
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 4 && "--serve".equals(args[0])) {
+            // A warm worker (WarmServer): bootstrap once, replay many files.
+            Bootstrap.init(System.getenv().getOrDefault("FORGE_RES", "forge-gui/res"));
+            ScenarioReplay r = new ScenarioReplay(new ForgeEngine(), System.getenv().getOrDefault("FORGE_ORACLE_REF", ""));
+            WarmServer.serve(args[1], Long.parseLong(args[2]), Long.parseLong(args[3]), (in, out) -> replayLines(r, in, out));
+            System.exit(0);
+        }
         if (args.length < 2) {
             System.err.println("usage: ScenarioReplay <in.jsonl> <out.jsonl> [--res DIR] [--repeat N]");
             System.exit(2);
