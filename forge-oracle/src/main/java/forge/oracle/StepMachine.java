@@ -1703,9 +1703,37 @@ public final class StepMachine {
         return out;
     }
 
-    /** A target ref's object: a player, a permanent or card, or the spell a
-     * stack card represents. */
+    /** The ability a "pN:ability:Name[#k]" ref names: the k-th pending
+     * ability (not a spell) on the stack, in creation order, activated or
+     * triggered by seat N, whose source card is Name -- the object Azorius
+     * Guildmage's "Counter target activated ability" (TargetType$ Activated)
+     * targets (CR 113.3b, 602.2). The source may have left the battlefield
+     * with its cost (Dark Sphere sacrifices itself), so it is matched by
+     * name wherever it is now. */
+    private SpellAbility stackAbility(String ref) {
+        RefTable.Ref r = RefTable.parse(ref);
+        if (r.seat >= seats.length) {
+            throw new HarnessError("ref " + ref + " names no seat");
+        }
+        List<SpellAbilityStackInstance> topFirst = new ArrayList<>();
+        for (SpellAbilityStackInstance si : game.getStack()) {
+            topFirst.add(si);
+        }
+        SpellAbilityStackInstance found = RefTable.nthPending(topFirst, si -> !si.isSpell()
+                && si.getActivatingPlayer() == seats[r.seat]
+                && si.getSourceCard() != null && si.getSourceCard().getName().equals(r.name), r.nth);
+        if (found == null) {
+            throw new HarnessError("ref " + ref + " is not an ability on the stack");
+        }
+        return found.getSpellAbility();
+    }
+
+    /** A target ref's object: a player, a permanent or card, the spell a
+     * stack card represents, or a stack ability ("pN:ability:Name"). */
     private GameObject targetObject(String ref) {
+        if (RefTable.isAbilityRef(ref)) {
+            return stackAbility(ref);
+        }
         GameEntity e = entity(ref);
         if (e instanceof Card && ((Card) e).isInZone(ZoneType.Stack)) {
             for (SpellAbilityStackInstance si : game.getStack()) {

@@ -35,13 +35,23 @@ public final class RefTable {
         public final boolean token;
         public final int nth;
         public final boolean player;
+        /** "pN:ability:Name[#k]": the k-th pending ability object on the
+         * stack, controlled by seat N, whose source is the named card (gorge's
+         * grammar for a stack ability, rules/oracle_run.go splitRef). name is
+         * the source's name, not "ability:Name". */
+        public final boolean ability;
 
         Ref(int seat, String name, boolean token, int nth, boolean player) {
+            this(seat, name, token, nth, player, false);
+        }
+
+        Ref(int seat, String name, boolean token, int nth, boolean player, boolean ability) {
             this.seat = seat;
             this.name = name;
             this.token = token;
             this.nth = nth;
             this.player = player;
+            this.ability = ability;
         }
     }
 
@@ -83,9 +93,13 @@ public final class RefTable {
         }
         String name = ref.substring(colon + 1);
         boolean token = false;
+        boolean ability = false;
         if (name.startsWith("token:")) {
             token = true;
             name = name.substring("token:".length());
+        } else if (name.startsWith("ability:")) {
+            ability = true;
+            name = name.substring("ability:".length());
         }
         int nth = 1;
         int hash = name.lastIndexOf('#');
@@ -102,7 +116,31 @@ public final class RefTable {
             name = name.substring(0, hash);
             nth = n;
         }
-        return new Ref(seat, name, token, nth, false);
+        return new Ref(seat, name, token, nth, false, ability);
+    }
+
+    /** True for an "ability:" ref ("p1:ability:Dark Sphere#2"). Malformed refs
+     * are not ability refs; parse reports them. */
+    public static boolean isAbilityRef(String ref) {
+        try {
+            return parse(ref).ability;
+        } catch (HarnessError e) {
+            return false;
+        }
+    }
+
+    /** The nth (1-based) match of a stack listed top-first, counted from the
+     * bottom: gorge ranks pending abilities in creation order, the oldest
+     * first, and Forge's stack iterates top-first, so the same ability gets
+     * the same k. Null when fewer than nth match. */
+    public static <T> T nthPending(List<T> topFirst, java.util.function.Predicate<T> matches, int nth) {
+        int seen = 0;
+        for (int i = topFirst.size() - 1; i >= 0; i--) {
+            if (matches.test(topFirst.get(i)) && ++seen == nth) {
+                return topFirst.get(i);
+            }
+        }
+        return null;
     }
 
     /** A seat ref "pN", or -1. */
