@@ -1444,6 +1444,31 @@ public final class StepMachine {
                 throw new HarnessError("step " + stepIdx + " target " + unusedRefs(d) + " is not a legal target for " + sa);
             }
         }
+        // Mirror TargetSelection.chooseTargets' gate: Forge cancels the ability
+        // when even the largest legal target set cannot reach min (CR 603.3d
+        // with 601.2c: the required number of targets cannot be chosen, so the
+        // ability is removed). gorge poses no ask for an ability it never put
+        // on the stack, so a decline here is the scripted answer, not a miss;
+        // with enough candidates an unanswered ask stays a miss. getAllCandidates
+        // already filters through canTarget (TargetUnique, already-chosen), so
+        // only the distinct-controller count needs mirroring here.
+        boolean hasEnoughTargets = min == 0 || sa.getTargets().size() >= min;
+        boolean hasEnoughCandidates = cands.size() >= min;
+        if (sa.getTargetRestrictions() != null
+                && (sa.getTargetRestrictions().isDifferentControllers() || sa.getTargetRestrictions().isForEachPlayer())) {
+            Set<Player> controllers = new HashSet<>();
+            for (GameEntity c : cands) {
+                if (c instanceof Card) {
+                    controllers.add(((Card) c).getController());
+                }
+            }
+            hasEnoughCandidates &= controllers.size() >= min;
+        }
+        if (!hasEnoughCandidates && !hasEnoughTargets) {
+            note("target step " + stepIdx + ": fewer candidates than min, ability not put on the stack ("
+                    + cands.size() + " candidates, min " + min + "): " + sa.getHostCard());
+            return false;
+        }
         miss("target", String.valueOf(sa));
         return false; // loose: no scripted target; the cast fails visibly
     }
