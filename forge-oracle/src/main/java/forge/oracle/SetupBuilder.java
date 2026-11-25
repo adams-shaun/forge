@@ -313,7 +313,34 @@ final class SetupBuilder {
         if (life != null && life.isJsonPrimitive()) {
             p.setLife(life.getAsInt(), null);
         }
+        placePlayerCounters(p, i, s.get("player_counters"));
         placeTokens(m, i);
+    }
+
+    /** A seat's setup "player_counters" ([{kind, n}], gorge's
+     * SetupPlayerCounter): each entry is the COMPLETE count of its kind
+     * (also 0), written as recorded state with no counter event and no
+     * trigger (CR 122.1; energy is a player counter, CR 107.14), like the
+     * life read beside it. Only an enum counter can sit on a player (ENERGY,
+     * POISON, EXPERIENCE, RAD, ...): counterType files an unrecognised kind
+     * as a custom counter, which a typo must not silently become. */
+    static void placePlayerCounters(Player p, int seat, JsonElement e) {
+        if (e == null || !e.isJsonArray()) {
+            return;
+        }
+        for (JsonElement el : e.getAsJsonArray()) {
+            JsonObject pc = el.getAsJsonObject();
+            String kind = pc.get("kind").getAsString();
+            int n = pc.get("n").getAsInt();
+            if (n < 0) {
+                throw new HarnessError("setup player_counters " + kind + " on p" + seat + " is negative: " + n);
+            }
+            CounterType t = counterType(kind);
+            if (!(t instanceof CounterEnumType)) {
+                throw new HarnessError("setup player_counters: unknown player counter kind " + kind + " on p" + seat);
+            }
+            p.setCounters(t, n, null, false);
+        }
     }
 
     /** CR 903.3c: a commander deck has one commander or a partner pair. */
