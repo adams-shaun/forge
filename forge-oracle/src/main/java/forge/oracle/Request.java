@@ -19,6 +19,8 @@ import com.google.gson.JsonParser;
  * <pre>
  * {"id": "...", "scenario_sha": "...", "item": {...the Item as gen wrote it...},
  *  "gorge_decisions": [...rules.OracleDecision...],
+ *  "graveyard_ends": {"&lt;step&gt;:&lt;seat&gt;": [&lt;names in that seat's
+ *      graveyard at the step's end&gt;]},
  *  "abilities": {"&lt;step index&gt;": "&lt;Face.Abilities[ability_index].Line&gt;"},
  *  "max_turn": &lt;the last turn gorge's replay reached&gt;}
  * </pre>
@@ -36,6 +38,13 @@ public final class Request {
     public final String scenarioSha;
     public final List<JsonObject> decisions;
     public final Map<Integer, String> abilities;
+    /** forge-export's graveyard_ends, keyed "&lt;step&gt;:&lt;seat&gt;": the
+     * names in that seat's graveyard at the END of the step, one key per
+     * graveyard_order pin's step and seat. StepMachine.orderGraveyardPin
+     * classifies an offered card a pin does not name with it; null when the
+     * export wrote none (an older request), in which case an unnamed offered
+     * card still misses. */
+    public final Map<String, List<String>> graveyardEnds;
 
     private Request(JsonObject raw) {
         this.raw = raw;
@@ -68,6 +77,24 @@ public final class Request {
             }
         }
         this.abilities = Collections.unmodifiableMap(ab);
+        Map<String, List<String>> gends = null;
+        JsonElement gee = raw.get("graveyard_ends");
+        if (gee != null && gee.isJsonObject()) {
+            gends = new TreeMap<>();
+            for (Map.Entry<String, JsonElement> e : gee.getAsJsonObject().entrySet()) {
+                if (!e.getValue().isJsonArray()) {
+                    continue;
+                }
+                List<String> names = new ArrayList<>();
+                for (JsonElement n : e.getValue().getAsJsonArray()) {
+                    if (n.isJsonPrimitive()) {
+                        names.add(n.getAsString());
+                    }
+                }
+                gends.put(e.getKey(), Collections.unmodifiableList(names));
+            }
+        }
+        this.graveyardEnds = gends == null ? null : Collections.unmodifiableMap(gends);
     }
 
     /** Parses one line. Throws on JSON that is not an object. */
@@ -115,6 +142,12 @@ public final class Request {
         }
         JsonElement x = e.getAsJsonArray().get(i);
         return x != null && x.isJsonPrimitive() ? x.getAsString() : "";
+    }
+
+    /** The graveyard_ends names for step and seat, or null when the export
+     * wrote none for that key (an older request, or no pin there). */
+    public List<String> graveyardEnd(int step, int seat) {
+        return graveyardEnds == null ? null : graveyardEnds.get(step + ":" + seat);
     }
 
     /**

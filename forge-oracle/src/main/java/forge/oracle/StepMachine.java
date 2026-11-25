@@ -2209,6 +2209,9 @@ public final class StepMachine {
             note("order step " + stepIdx + ": " + what + " (no order pin: keeping Forge's order)");
             return new ArrayList<>(cards);
         }
+        if (d != null && what.contains("Graveyard")) {
+            return orderGraveyardPin(cards, d, what);
+        }
         return orderCardsByPicks(cards, d, what, Card::getName);
     }
 
@@ -2291,6 +2294,62 @@ public final class StepMachine {
             return null;
         }
         note("order step " + stepIdx + ": " + what + " " + picks);
+        return ordered;
+    }
+
+    /** The graveyard pin's half of {@link #orderCards}, separate from the
+     * generic {@link #orderByNames}: a pinned ask can offer a card the pin
+     * does not name, when only SOME of Forge's offered cards stay in the
+     * graveyard. Seed of Hope's mill moves Island and Forest together, and
+     * Island returns to the hand within the step, so forge-export's pin is
+     * [Forest, Seed of Hope] while Forge's ask offers the milled pair. The
+     * named cards are ordered by the pin as before; an unnamed offered card
+     * is classified by the request's graveyard_ends, the names in the seat's
+     * graveyard at the END of the pin's step (forge_order.go): a name the end
+     * graveyard contains is an arrival the checkpoints see, so gorge's pin
+     * not naming it is the ordering difference it always was and the ask
+     * still misses; a name it does not contain passed through the graveyard
+     * within the step, so its position is not observable at the next
+     * checkpoint and no gorge answer can exist -- it is kept in Forge's
+     * offered order after the named cards, with a note. An end list that is
+     * absent (an older export that wrote no graveyard_ends) cannot classify
+     * anything, so the ask misses, as it did before the field existed. The
+     * end list is a name set, not an identity: an older copy of the transit
+     * card's name still in the graveyard makes the name look observable and
+     * the ask misses again, which is the safe direction, since no divergence
+     * is hidden. Package-visible so the unit test can exercise the matching
+     * without a Game. */
+    List<Card> orderGraveyardPin(Collection<Card> cards, Decision d, String what) {
+        List<String> end = req.graveyardEnd(d.step, d.seat);
+        List<Card> left = new ArrayList<>(cards);
+        List<Card> ordered = new ArrayList<>();
+        List<Card> transit = new ArrayList<>();
+        for (String pick : d.picks) {
+            for (int i = 0; i < left.size(); i++) {
+                if (pick.equals(left.get(i).getName())) {
+                    ordered.add(left.remove(i));
+                    break;
+                }
+            }
+        }
+        for (Card c : left) {
+            if (end == null || end.contains(c.getName())) {
+                miss("order", what + ": gorge order " + d.picks + " does not name every card");
+                return null;
+            }
+            transit.add(c);
+        }
+        ordered.addAll(transit);
+        if (transit.isEmpty()) {
+            note("order step " + stepIdx + ": " + what + " " + d.picks);
+        } else {
+            List<String> names = new ArrayList<>();
+            for (Card c : transit) {
+                names.add(c.getName());
+            }
+            note("order step " + stepIdx + ": " + what + " " + d.picks
+                    + " (transit " + names + " left before the checkpoint; kept in Forge's order)");
+        }
         return ordered;
     }
 

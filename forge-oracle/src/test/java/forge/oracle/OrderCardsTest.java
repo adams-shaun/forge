@@ -3,6 +3,7 @@ package forge.oracle;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
@@ -43,8 +44,16 @@ public class OrderCardsTest {
     }
 
     private static StepMachine machine(String decisions) {
-        Request req = Request.parse("{\"id\":\"order\",\"item\":{\"steps\":[{\"op\":\"pass\"}]},"
-                + "\"gorge_decisions\":" + decisions + "}");
+        return machine(decisions, null);
+    }
+
+    /** As machine(String); extra is spliced into the request JSON verbatim as
+     * extra top-level members, each written in the caller as a leading comma
+     * plus a "key":value pair, for graveyard_ends. */
+    private static StepMachine machine(String decisions, String extra) {
+        Request req = Request.parse("{\"id\":\"order\",\"item\":{\"steps\":[{\"op\":\"pass\"}]}"
+                + (extra == null ? "" : extra)
+                + ",\"gorge_decisions\":" + decisions + "}");
         StepMachine m = new StepMachine(req, false);
         m.stepIdx = 0;
         return m;
@@ -249,5 +258,72 @@ public class OrderCardsTest {
         assertTrue(m.notes.toString().contains("order step 0: order to Library"), m.notes.toString());
         assertNull(m.take(0, DecisionQueue::isCardOrder), "the card order is consumed once");
         assertNull(m.dq.leftover());
+    }
+
+    /** Seed of Hope's mill asks "order to Graveyard" for the milled pair
+     * (Island, Forest), but Island returns to the hand within the step, so
+     * the pin forge-export derives from the checkpoints names only [Forest,
+     * Seed of Hope]. The named cards are ordered by the pin and the transit
+     * card is kept in Forge's offered order after them, with a note, instead
+     * of missing an order no gorge answer can exist for: Island's graveyard
+     * position is gone before the next checkpoint. */
+    @Test
+    public void pinnedGraveyardOrderKeepsATransitOfferedCard() {
+        StepMachine m = machine(
+                "[{\"step\":0,\"seat\":0,\"kind\":\"order\",\"gorge_kind\":\"graveyard_order\","
+                        + "\"picks\":[\"Forest\",\"Seed of Hope\"]}]",
+                ",\"graveyard_ends\":{\"0:0\":[\"Forest\",\"Seed of Hope\"]}");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Island", "Forest"}) {
+            cards.add(card(m, name));
+        }
+        List<Card> got = m.orderCards(0, cards, "order to Graveyard");
+        assertNotNull(got, "the transit ask is answered, not missed");
+        assertEquals(got.stream().map(Card::getName).toList(),
+                List.of("Forest", "Island"),
+                "the named card takes the pin's position and the transit card follows in Forge's order");
+        assertTrue(m.notes.toString().contains(
+                "transit [Island] left before the checkpoint"), m.notes.toString());
+        assertNull(m.take(0, DecisionQueue::isGraveyardOrder), "the pin is consumed once");
+        assertNull(m.dq.leftover());
+    }
+
+    /** The transit tolerance cannot hide a real ordering difference: an
+     * unnamed offered card whose name the END graveyard still contains is an
+     * arrival the checkpoints see, so a pin that does not name it is still
+     * the strict miss it was. */
+    @Test
+    public void pinnedGraveyardOrderStillMissesAnUnnamedCardTheCheckpointsSee() {
+        StepMachine m = machine(
+                "[{\"step\":0,\"seat\":0,\"kind\":\"order\",\"gorge_kind\":\"graveyard_order\","
+                        + "\"picks\":[\"Forest\",\"Seed of Hope\"]}]",
+                ",\"graveyard_ends\":{\"0:0\":[\"Island\",\"Forest\",\"Seed of Hope\"]}");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Island", "Forest"}) {
+            cards.add(card(m, name));
+        }
+        assertNull(m.orderCards(0, cards, "order to Graveyard"),
+                "Island is in the end graveyard, so the pin must name it");
+        assertTrue(m.notes.toString().contains(
+                "gorge order [Forest, Seed of Hope] does not name every card"), m.notes.toString());
+    }
+
+    /** An export that wrote no graveyard_ends cannot classify anything, so a
+     * pinned ask with an unnamed offered card misses exactly as it did
+     * before the field existed. */
+    @Test
+    public void pinnedGraveyardOrderWithoutEndNamesStillMisses() {
+        StepMachine m = machine(
+                "[{\"step\":0,\"seat\":0,\"kind\":\"order\",\"gorge_kind\":\"graveyard_order\","
+                        + "\"picks\":[\"Forest\",\"Seed of Hope\"]}]");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Island", "Forest"}) {
+            cards.add(card(m, name));
+        }
+        assertNull(m.orderCards(0, cards, "order to Graveyard"));
+        assertTrue(m.notes.toString().contains("does not name every card"), m.notes.toString());
     }
 }
