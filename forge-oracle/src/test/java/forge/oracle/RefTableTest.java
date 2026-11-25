@@ -111,4 +111,27 @@ public class RefTableTest {
         assertEquals(RefTable.parseSeat("p"), -1);
         assertEquals(RefTable.parseSeat("p1a"), -1);
     }
+
+    @Test
+    public void refOfNamesAnObjectAsGorgeSnapshotsIt() {
+        RefTable r = new RefTable();
+        r.bind(0, "Plains", 10);
+        r.bind(0, "Plains", 11);
+        List<RefTable.Obj> live = List.of(card(10, 0, "Plains"), card(11, 0, "Plains"), card(12, 0, "Plains"),
+                card(13, 1, "Plains"), token(20, 0, "Goblin Token", true), token(21, 0, "Goblin Token", true));
+        assertEquals(r.refOf(live.get(0), "Plains", live), "p0:Plains", "a setup-bound ref follows its card");
+        assertEquals(r.refOf(live.get(1), "Plains", live), "p0:Plains#2");
+        assertEquals(r.refOf(live.get(2), "Plains", live), "p0:Plains#3", "an unbound card is the k-th of its name");
+        assertEquals(r.refOf(live.get(3), "Plains", live), "p1:Plains", "numbered per owner");
+        assertEquals(r.refOf(live.get(5), "Goblin Token", live), "p0:token:Goblin Token#2");
+        RefTable fresh = new RefTable();
+        fresh.bind(0, "Plains", 99);
+        assertEquals(fresh.refOf(live.get(0), "Plains", live), "p0:Plains#1",
+                "a spelling bound to another object is spelled #1 so it does not shadow");
+        for (RefTable.Obj o : live) {
+            if (!o.token) {
+                assertEquals(r.resolveCard(r.refOf(o, "Plains", live), live), o.id, "refOf round-trips through resolveCard");
+            }
+        }
+    }
 }
