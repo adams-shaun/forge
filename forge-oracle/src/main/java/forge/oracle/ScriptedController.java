@@ -105,6 +105,16 @@ public class ScriptedController extends PlayerControllerAi {
             "echo_pay", "echo_pay_manual", "echo_sac",
             "cumulative_pay", "cumulative_pay_manual", "cumulative_sac");
 
+    /** gorge's Riot pick label for entering with the counter (engine/rules/cast_etbchoice.go). */
+    private static final String RIOT_COUNTER = "Enter with a +1/+1 counter";
+
+    /** Whether sa is Riot's haste-unless-counter Animate (CardFactoryUtil, keyword "Riot":
+     * DB$ Animate | Keywords$ Haste | UnlessCost$ AddCounter<1/P1P1> | SpellDescription$ Riot). */
+    static boolean isRiotChoice(SpellAbility sa) {
+        return sa != null && sa.getApi() == ApiType.Animate && "Riot".equals(sa.getParam("SpellDescription"))
+                && sa.getHostCard() != null && sa.getHostCard().hasKeyword(forge.game.keyword.Keyword.RIOT);
+    }
+
     private static boolean isEchoCumulativeAnswer(Decision d) {
         return d.picks.size() == 1 && d.pickKinds.size() == 1
                 && ECHO_CUMULATIVE_ANSWERS.contains(d.pickKinds.get(0));
@@ -838,6 +848,30 @@ public class ScriptedController extends PlayerControllerAi {
             m.note("echo/cumulative upkeep step " + m.step() + ": " + upkeep.picks.get(0)
                     + (pay ? " paid=" + paid : ""));
             return paid;
+        }
+        // Riot (CR 702.136a) is the controller's choice of a +1/+1 counter or
+        // haste. Forge builds it as an ETB replacement whose DB$ Animate grants
+        // haste UnlessCost$ AddCounter<1/P1P1> | UnlessPayer$ You: paying the
+        // unless cost is the counter choice, declining it is haste. gorge asks
+        // one choose_n over two "riot" options ("Enter with a +1/+1 counter",
+        // "Gain haste"), so the pick, matched by kind, answers this payment.
+        if (isRiotChoice(sa)) {
+            Decision riot = take(x -> x.pickKinds.contains("riot"));
+            if (riot != null) {
+                boolean pay = !riot.picks.isEmpty() && riot.picks.get(0).equalsIgnoreCase(RIOT_COUNTER);
+                boolean paid = false;
+                if (pay) {
+                    payingUnlessCost = true;
+                    try {
+                        paid = PlaySpellAbility.payCostDuringAbilityResolve(this, player, cost, sa, null);
+                    } finally {
+                        payingUnlessCost = false;
+                    }
+                }
+                m.note("riot step " + m.step() + ": " + (riot.picks.isEmpty() ? "(no pick)" : riot.picks.get(0))
+                        + (pay ? " paid=" + paid : ""));
+                return paid;
+            }
         }
         if (m.step() < 0) {
             // Setup placement (before the scenario's first step) restates the
