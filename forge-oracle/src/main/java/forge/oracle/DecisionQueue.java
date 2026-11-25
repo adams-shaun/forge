@@ -168,6 +168,15 @@ public final class DecisionQueue {
                 && !d.pickKinds.get(0).equals("trigger") && !isGraveyardOrder(d);
     }
 
+    /** gorge's CR 401.4 library placement arrangement (an "arrange" decision
+     * over the cards one effect puts at the same library position): an "order"
+     * whose every pick kind is "library_placement", first pick nearest the
+     * top. */
+    public static boolean isLibraryPlacementOrder(Decision d) {
+        return d.kind.equals("order") && !d.pickKinds.isEmpty()
+                && d.pickKinds.stream().allMatch(k -> k.equals("library_placement"));
+    }
+
     /** gorge's OriginAlternative$ zone election ("search your library and/or
      * graveyard", resume search_zones): one choose_n whose picks are zone
      * labels. Forge asks it as one confirm per zone, not a yes/no. */

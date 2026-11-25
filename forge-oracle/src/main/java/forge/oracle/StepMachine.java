@@ -2054,6 +2054,55 @@ public final class StepMachine {
                 && peek(seat, x -> DecisionQueue.isObjectChoice(x) || DecisionQueue.isEmptyChoice(x)) == null;
     }
 
+    /** The forced Hand -> Library put-back (Sawtooth Loon's "draw two cards,
+     * then put two cards from your hand on the bottom of your library" into an
+     * empty hand): exactly ChangeNum$ cards are eligible, so gorge has no
+     * selection to pose and logs only the CR 401.4 placement order, an "order"
+     * decision whose pick kinds are all "library_placement" and whose refs are
+     * exactly the cards Forge offers. Forge poses the same forced selection one
+     * card at a time (1..1 per ask) and places the picks in order, so the pick
+     * order IS the placement order. Seeds the carry that {@link #pickObjects}
+     * answers from, so each per-card ask takes the next ref of gorge's order.
+     * The export already reverses a top placement for Forge's successive-top
+     * puts (forgeLibraryTopOrder), so the refs are used as recorded.
+     *
+     * Only the seat's NEXT decision at the step qualifies and only when its
+     * refs name every offered card once (a sub-selection, or a pick belonging
+     * to another ask, leaves the queue alone: the strict miss stays). Returns
+     * whether a decision was consumed. */
+    boolean seedHandLibraryPlacement(int seat, Collection<Card> offered) {
+        if (offered.size() < 2 || (carryStep == stepIdx && carrySeat == seat
+                && (!carryRefs.isEmpty() || carryOpen))) {
+            return false;
+        }
+        for (int st : decisionSteps()) {
+            Decision head = dq.peekHead(st, seat);
+            if (head == null) {
+                continue;
+            }
+            if (!DecisionQueue.isLibraryPlacementOrder(head) || head.picks.size() != offered.size()) {
+                return false;
+            }
+            List<Card> opts = new ArrayList<>(offered);
+            Set<Card> used = new HashSet<>();
+            for (String ref : head.refs()) {
+                Card o = matchRef(ref, opts, used);
+                if (o == null) {
+                    return false;
+                }
+                used.add(o);
+            }
+            head.consumed = true;
+            carryStep = stepIdx;
+            carrySeat = seat;
+            carryRefs = new ArrayList<>(head.refs());
+            carryOpen = false;
+            note("order step " + stepIdx + ": hand to library placement, one card per ask " + head.picks);
+            return true;
+        }
+        return false;
+    }
+
     /** Consumes gorge's one-option pick of the lone forced entity Forge asks
      * about (ChoosePlayer over the one opponent, a ChooseEach$ category with
      * one candidate). Only a pick whose single ref IS this entity qualifies:
