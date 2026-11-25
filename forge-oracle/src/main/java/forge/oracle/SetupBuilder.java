@@ -62,7 +62,8 @@ import forge.item.PaperToken;
  *     only binds the card; it does not unlock the door it names. An explicit
  *     unlock is the CR 709.5e special action, which no scenario step drives.</li>
  * <li>Then, per placement as gorge emits them: back face, tapped, setup
- *     counters (through the counter table, triggers live), speed, life.</li>
+ *     counters (through the counter table, triggers live), speed. Every seat's life is
+ *     written first, before any permanent exists (placeLife).</li>
  * <li>Setup {@code tokens} (forge-gui res/tokenscripts stems) are minted at the
  *     end of their seat's placement, after its library filler, in list order,
  *     and added to the battlefield silently: no CreateToken and no
@@ -119,6 +120,10 @@ final class SetupBuilder {
         th.suppressMode(TriggerType.ChangesZoneAll);
         Map<Card, String> links = new LinkedHashMap<>();
         try {
+            // Every seat's life goes in before any permanent exists (see placeLife).
+            for (int i = 0; i < m.seats.length; i++) {
+                placeLife(m.seats[i], m.req.seat(i));
+            }
             for (int i = 0; i < m.seats.length; i++) {
                 placeSeat(m, i, turn, links);
             }
@@ -166,6 +171,23 @@ final class SetupBuilder {
         game.onCleanupPhase();
         game.onCleanupPhase();
         game.getAction().checkStaticAbilities();
+    }
+
+    /** A seat's setup "life" is a state, not an event (CR 103.4: it is the
+     * starting life total). Player.setLife turns a raise into gainLife and a
+     * drop into loseLife (CR 119.5), so with a permanent already in play an
+     * Angel of Vitality's replacement (CR 614) made 25 read 26 and a life-loss
+     * trigger could fire. It is written for every seat before the first
+     * permanent is placed, while no replacement effect or trigger exists to
+     * see it; a setup life below 20 still leaves lifeLostThisTurn behind, which
+     * the cleanup passes in place() clear. Called before the seat loop, not per
+     * seat, so a later seat's battlefield cannot see an earlier seat's life
+     * either. */
+    private static void placeLife(Player p, JsonObject s) {
+        JsonElement life = s.get("life");
+        if (life != null && life.isJsonPrimitive()) {
+            p.setLife(life.getAsInt(), null);
+        }
     }
 
     private static void placeSeat(StepMachine m, int i, int turn, Map<Card, String> links) {
@@ -309,10 +331,6 @@ final class SetupBuilder {
             p.createSpeedEffect();
         }
         seatCommanders(p, i, seated, Request.counts(s, "commander_casts"));
-        JsonElement life = s.get("life");
-        if (life != null && life.isJsonPrimitive()) {
-            p.setLife(life.getAsInt(), null);
-        }
         placePlayerCounters(p, i, s.get("player_counters"));
         placeTokens(m, i);
     }
