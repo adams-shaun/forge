@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package forge.oracle;
 
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
@@ -65,5 +66,14 @@ public class TwoPilesOneCardSplitTest {
                 "the lone card is pile 1, notes: " + m.notes);
         assertTrue(m.notes.stream().anyMatch(n -> n.startsWith("pile step ") && n.contains("First pile")),
                 "the opponent's pile pick is still consumed, notes: " + m.notes);
+    }
+
+    /** Only a one-card 0..1 TwoPiles ask qualifies: no spell ability, or a
+     * bigger pool, is never swallowed here (it falls through to pickObjects). */
+    @Test
+    public void onlyTheLoneTwoPilesAskQualifies() throws Exception {
+        StepMachine m = replay("two-piles-one-card-epiphany-at-the-drownyard.jsonl");
+        assertFalse(m.loneTwoPilesSplit(0, null, 1, 0, 1), "no spell ability");
+        assertFalse(m.loneTwoPilesSplit(0, null, 2, 0, 2), "a two-card pool is a real split");
     }
 }
