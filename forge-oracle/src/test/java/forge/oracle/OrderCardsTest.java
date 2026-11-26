@@ -132,10 +132,30 @@ public class OrderCardsTest {
         assertFalse(m.notes.toString().contains("loose"), m.notes.toString());
     }
 
+    /** A simultaneous multi-name exile has no order the snapshot can see
+     * (SnapshotWriter sorts an exile's names), so no pin can exist and Forge's
+     * offered order is the only answer. Flickerform exiles the enchanted
+     * creature and itself in one resolution this way (xproof
+     * xs:XP:flickerform:f0a0:s1). */
+    @Test
+    public void unpinnedExileOrderKeepsForgeOrder() {
+        StepMachine m = machine("[]");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Forest", "Island"}) {
+            cards.add(card(m, name));
+        }
+        List<Card> got = m.orderCards(0, cards, "order to Exile");
+        assertEquals(got, cards, "Forge's offered order is kept");
+        assertTrue(m.notes.toString().contains(
+                "order to Exile (no order pin: keeping Forge's order)"), m.notes.toString());
+        assertFalse(m.notes.toString().contains("loose"), m.notes.toString());
+    }
+
     /** Every other destination still strict-misses when no decision is
      * queued: the fallback is deliberately limited to the graveyard,
-     * battlefield and hand asks above, so a future zone with an order truth
-     * cannot silently keep Forge's order instead of reporting it. */
+     * battlefield, hand and exile asks above, so a future zone with an order
+     * truth cannot silently keep Forge's order instead of reporting it. */
     @Test
     public void unpinnedOtherZoneStillLooseMisses() {
         StepMachine m = machine("[]");
@@ -144,7 +164,6 @@ public class OrderCardsTest {
         for (String name : new String[] {"Forest", "Island"}) {
             cards.add(card(m, name));
         }
-        assertNull(m.orderCards(0, cards, "order to Exile"), "no fallback for Exile");
         assertNull(m.orderCards(0, cards, "order to Library"), "no fallback for Library");
         assertTrue(m.notes.toString().contains("loose: AI answered order"), m.notes.toString());
     }
