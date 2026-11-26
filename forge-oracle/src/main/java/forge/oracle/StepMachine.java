@@ -1265,7 +1265,8 @@ public final class StepMachine {
      *     against the SAs Forge derived from keyword K with the same API,
      *     then the same cost; when none shares the API (gorge's Encore line
      *     against Forge's CopyPermanent), the SAs derived from K with the
-     *     same cost;</li>
+     *     same cost; "same cost" is the same rendering, else the same shape
+     *     (mana and cost-part classes, narrowByCost);</li>
      * <li>api+cost: same API and the same cost, parsed by Forge's own Cost.</li>
      * </ol>
      * Anything else is a harness row listing the candidates. */
@@ -1325,6 +1326,7 @@ public final class StepMachine {
         String kind = line.length() >= 2 ? line.substring(0, 2) : "";
         String api = want.getOrDefault(kind, "");
         String cost = costKey(want.getOrDefault("Cost", ""), c);
+        String shape = costShape(want.getOrDefault("Cost", ""));
         String kw = want.get("Keyword");
         if (kw != null) {
             List<SpellAbility> byKw = new ArrayList<>();
@@ -1340,24 +1342,27 @@ public final class StepMachine {
                 // same cost identify it, whatever the API.
                 for (SpellAbility sa : all) {
                     if (sa.getKeyword() != null && sa.getKeyword().getKeyword() != null
-                            && sa.getKeyword().getKeyword().toString().equalsIgnoreCase(kw) && costKey(sa).equals(cost)) {
+                            && sa.getKeyword().getKeyword().toString().equalsIgnoreCase(kw)) {
                         byKw.add(sa);
                     }
                 }
+                byKw = narrowByCost(byKw, cost, shape);
             } else if (byKw.size() > 1) {
-                byKw.removeIf(sa -> !costKey(sa).equals(cost));
+                // A commander's ninjutsu (CR 702.49d) is two SAs, one from hand and one from the command
+                // zone, with the same cost: both stay and identity() picks by Origin$/ActivationZone$.
+                byKw = narrowByCost(byKw, cost, shape);
             }
             if (!byKw.isEmpty()) {
                 return identity("keyword", byKw, all, line);
             }
         }
-        List<SpellAbility> loose = new ArrayList<>();
+        List<SpellAbility> sameApi = new ArrayList<>();
         for (SpellAbility sa : all) {
-            if (apiOf(sa).equalsIgnoreCase(api) && costKey(sa).equals(cost)) {
-                loose.add(sa);
+            if (apiOf(sa).equalsIgnoreCase(api)) {
+                sameApi.add(sa);
             }
         }
-        return identity("api+cost", loose, all, line);
+        return identity("api+cost", narrowByCost(sameApi, cost, shape), all, line);
     }
 
     private SpellAbility identity(String tier, List<SpellAbility> hits, List<SpellAbility> all, String line) {
@@ -1408,6 +1413,51 @@ public final class StepMachine {
 
     private static String costKey(SpellAbility sa) {
         return sa.getPayCosts() == null ? "" : normCost(sa.getPayCosts().toSimpleString());
+    }
+
+    /** The SAs of hits that cost what the line says: those whose Cost renders the same, or when none does,
+     * those whose cost has the same shape (costShape). The rendering is not a stable identity: a Return,
+     * ExileFromGrave or similar part prints from its description text, which gorge's spelling of the type
+     * ("Return<1/Creature.YouCtrl+attacking+unblocked>") never equals Forge's. */
+    private static List<SpellAbility> narrowByCost(List<SpellAbility> hits, String cost, String shape) {
+        List<SpellAbility> text = new ArrayList<>();
+        List<SpellAbility> shaped = new ArrayList<>();
+        for (SpellAbility sa : hits) {
+            if (costKey(sa).equals(cost)) {
+                text.add(sa);
+            }
+            if (shape != null && shape.equals(costShape(sa.getPayCosts()))) {
+                shaped.add(sa);
+            }
+        }
+        return text.isEmpty() ? shaped : text;
+    }
+
+    /** A cost's identity without its spelling: the total mana and the class of each other cost part
+     * (tap, Return, Sac, ...), not the parts' types or counts. Null when the raw cost does not parse. */
+    private static String costShape(String raw) {
+        if (raw.isEmpty()) {
+            return "";
+        }
+        try {
+            return costShape(new forge.game.cost.Cost(raw, true));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static String costShape(forge.game.cost.Cost cost) {
+        if (cost == null) {
+            return "";
+        }
+        List<String> classes = new ArrayList<>();
+        for (forge.game.cost.CostPart part : cost.getCostParts()) {
+            if (!(part instanceof forge.game.cost.CostPartMana)) {
+                classes.add(part.getClass().getSimpleName());
+            }
+        }
+        java.util.Collections.sort(classes);
+        return normCost(cost.getTotalMana().toString()) + "|" + String.join(",", classes);
     }
 
     private static String costKey(String raw, Card host) {
