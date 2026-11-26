@@ -152,10 +152,32 @@ public class OrderCardsTest {
         assertFalse(m.notes.toString().contains("loose"), m.notes.toString());
     }
 
+    /** A simultaneous multi-name move to the command zone has no order the
+     * snapshot can see (SnapshotWriter sorts a command zone's names, and
+     * gorge's digest sorts a Commander game's Command names), so no pin can
+     * exist and Forge's offered order is the only answer. No scripted card is
+     * known to order to Command yet (latent: ScriptedController builds the
+     * "order to " + destinationZone ask for every destination zone). */
+    @Test
+    public void unpinnedCommandOrderKeepsForgeOrder() {
+        StepMachine m = machine("[]");
+        m.build();
+        List<Card> cards = new ArrayList<>();
+        for (String name : new String[] {"Forest", "Island"}) {
+            cards.add(card(m, name));
+        }
+        List<Card> got = m.orderCards(0, cards, "order to Command");
+        assertEquals(got, cards, "Forge's offered order is kept");
+        assertTrue(m.notes.toString().contains(
+                "order to Command (no order pin: keeping Forge's order)"), m.notes.toString());
+        assertFalse(m.notes.toString().contains("loose"), m.notes.toString());
+    }
+
     /** Every other destination still strict-misses when no decision is
      * queued: the fallback is deliberately limited to the graveyard,
-     * battlefield, hand and exile asks above, so a future zone with an order
-     * truth cannot silently keep Forge's order instead of reporting it. */
+     * battlefield, hand, exile and command asks above, so a future zone with
+     * an order truth cannot silently keep Forge's order instead of reporting
+     * it. */
     @Test
     public void unpinnedOtherZoneStillLooseMisses() {
         StepMachine m = machine("[]");

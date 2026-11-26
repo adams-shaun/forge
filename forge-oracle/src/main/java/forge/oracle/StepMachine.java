@@ -2422,18 +2422,19 @@ public final class StepMachine {
      * decision is queued, and whose order is therefore unobservable: the
      * graveyard (a card that passes through in one resolution is in neither
      * checkpoint), the battlefield (a return in the same resolution, for
-     * which gorge records no order at all), and the hand and the exile (the
-     * snapshots sort both zones' names, so their order is not part of the
-     * game state; the Wrenn and Seven -8 returns the planeswalker and seven
-     * Forests to the hand this way, and Flickerform exiles the enchanted
-     * creature and itself this way). The library is excluded because its
-     * arrange/dig decisions are gorge's order truth; every other zone is
-     * excluded too, so a future zone with an order truth strict-misses rather
-     * than silently keeping Forge's order. Every order ask routes through
-     * this one gate, so a new ask for one of these zones cannot miss the
-     * fallback. */
+     * which gorge records no order at all), and the hand, the exile and the
+     * command zone (the snapshots sort those zones' names, so their order is
+     * not part of the game state; the Wrenn and Seven -8 returns the
+     * planeswalker and seven Forests to the hand this way, Flickerform exiles
+     * the enchanted creature and itself this way, and a Commander game's
+     * command zone is sorted by name on both sides). The library is excluded
+     * because its arrange/dig decisions are gorge's order truth; every other
+     * zone is excluded too, so a future zone with an order truth strict-misses
+     * rather than silently keeping Forge's order. Every order ask routes
+     * through this one gate, so a new ask for one of these zones cannot miss
+     * the fallback. */
     private static final Set<String> UNOBSERVABLE_ORDER_ZONES =
-            Set.of("Graveyard", "Battlefield", "Hand", "Exile");
+            Set.of("Graveyard", "Battlefield", "Hand", "Exile", "Command");
 
     private static boolean keepsForgeOrderWithoutPin(String what) {
         for (String zone : UNOBSERVABLE_ORDER_ZONES) {
