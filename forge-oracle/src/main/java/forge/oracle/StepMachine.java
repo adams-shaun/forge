@@ -2347,10 +2347,15 @@ public final class StepMachine {
             // a card that enters and leaves within one resolution is in neither
             // checkpoint, so forge_order.go cannot derive a pin for it; Forge
             // still asks. The same resolution asks "order to Battlefield" for
-            // the return, a zone gorge records no order for at all. Keep
-            // Forge's offered order for exactly those two destinations when no
-            // decision is queued; every other zone (library arrange/dig,
-            // exile, hand, command, stack, sideboard) still misses, so a
+            // the return, a zone gorge records no order for at all. A
+            // simultaneous multi-name move to a hand or an exile has no order
+            // the snapshots can see (both sort those zone's names: the Wrenn
+            // and Seven -8 returns the planeswalker and seven Forests to the
+            // hand this way; Flickerform exiles the enchanted creature and
+            // itself this way), so no pin can exist for those asks either.
+            // Keep Forge's offered order for exactly these four destinations
+            // when no decision is queued; every other zone (library
+            // arrange/dig, command, stack, sideboard) still misses, so a
             // future order truth there is not silently kept. A visible
             // graveyard arrival still has its pin above, so a real ordering
             // difference on a move a checkpoint can see is still caught.
@@ -2367,16 +2372,18 @@ public final class StepMachine {
      * decision is queued, and whose order is therefore unobservable: the
      * graveyard (a card that passes through in one resolution is in neither
      * checkpoint), the battlefield (a return in the same resolution, for
-     * which gorge records no order at all), and the hand (the snapshot sorts
-     * a hand's names, so its order is not part of the game state; the Wrenn
-     * and Seven -8 returns the planeswalker and seven Forests this way). The
-     * library is excluded because its arrange/dig decisions are gorge's order
-     * truth; exile and every other zone are excluded too, so a future zone
-     * with an order truth strict-misses rather than silently keeping Forge's
-     * order. Every order ask routes through this one gate, so a new ask for
-     * one of these zones cannot miss the fallback. */
+     * which gorge records no order at all), and the hand and the exile (the
+     * snapshots sort both zones' names, so their order is not part of the
+     * game state; the Wrenn and Seven -8 returns the planeswalker and seven
+     * Forests to the hand this way, and Flickerform exiles the enchanted
+     * creature and itself this way). The library is excluded because its
+     * arrange/dig decisions are gorge's order truth; every other zone is
+     * excluded too, so a future zone with an order truth strict-misses rather
+     * than silently keeping Forge's order. Every order ask routes through
+     * this one gate, so a new ask for one of these zones cannot miss the
+     * fallback. */
     private static final Set<String> UNOBSERVABLE_ORDER_ZONES =
-            Set.of("Graveyard", "Battlefield", "Hand");
+            Set.of("Graveyard", "Battlefield", "Hand", "Exile");
 
     private static boolean keepsForgeOrderWithoutPin(String what) {
         for (String zone : UNOBSERVABLE_ORDER_ZONES) {
